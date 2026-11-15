@@ -33,7 +33,7 @@ export function Brand({ light = false }) {
 
 function navFor(role) {
   if (role === 'STUDENT') return [
-    ['Dashboard', '/student'], ['Explore', '/events'], ['My registrations', '/student/registrations'], ['Saved', '/student/saved'], ['Notifications', '/notifications'], ['Profile', '/profile'],
+    ['Dashboard_2', '/student'], ['Explore', '/events'], ['My registrations', '/student/registrations'], ['Saved', '/student/saved'], ['Notifications', '/notifications'], ['Profile', '/profile'],
   ]
   if (role === 'ORGANIZER') return [
     ['Dashboard', '/organizer'], ['My events', '/organizer/events'], ['Participants', '/organizer/participants'], ['Check-in', '/organizer/attendance'], ['Notifications', '/notifications'], ['Profile', '/profile'],
