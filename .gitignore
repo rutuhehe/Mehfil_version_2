@@ -7,6 +7,9 @@ coverage/
 ticket-validator/*.class
 ticket-validator/checked-in.txt
 .vite/
+supabase/.temp/
+supabase/.branches/
+.supabase-cli-home/
 *.log
 .DS_Store
 Thumbs.db

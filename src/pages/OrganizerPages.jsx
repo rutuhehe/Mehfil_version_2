@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowRight, ArrowUpRight, CalendarDays, CircleCheck, ClipboardCheck, MapPin, Pencil, Plus, Search, Ticket, Users, X } from 'lucide-react'
 import { Button, EmptyState, ErrorState, Field, Loading, PageTitle, SectionHeading, StatCard, StatusBadge, useToast } from '../components/ui'
 import { useAuth } from '../contexts/AuthContext'
-import { fetchEvents, fetchParticipants, fetchRegistrations, markAttendance, saveEvent, sendEventEmail, updateEvent } from '../services/api'
+import { adminCreateEvent, adminUpdateEvent, fetchEvents, fetchParticipants, fetchRegistrations, markAttendance, saveEvent, sendEventEmail, updateEvent } from '../services/api'
 import { useRequest, Workspace, EventRows, DataTable } from './WorkspaceShared'
 import { groupRegistrationsByEvent } from '../utils/events'
 import { formatDate, formatTime, friendlyError } from '../utils/format'
@@ -61,7 +61,9 @@ export function OrganizerEventsPage() {
 export function OrganizerEventFormPage() {
   const { eventId } = useParams()
   const editMode = Boolean(eventId)
-  const { user } = useAuth()
+  const { user, profile } = useAuth()
+  const isAdmin = profile?.role === 'ADMIN'
+  const eventCollectionPath = isAdmin ? '/admin/events' : '/organizer/events'
   const navigate = useNavigate()
   const notify = useToast()
   const [form, setForm] = useState(blankEvent)
@@ -73,9 +75,9 @@ export function OrganizerEventFormPage() {
   const [error, setError] = useState('')
   useEffect(() => {
     if (!editMode) return
-    fetchEvents({ organizerId: user.id }).then((events) => {
+    fetchEvents(isAdmin ? {} : { organizerId: user.id }).then((events) => {
       const event = events.find((item) => item.event_id === eventId)
-      if (!event) throw new Error('This event is unavailable or does not belong to your account.')
+      if (!event) throw new Error(isAdmin ? 'This event is unavailable.' : 'This event does not belong to your account.')
       const category = event.category_name || ''
       const isStandardCategory = EVENT_CATEGORIES.includes(category)
       setCategoryChoice(isStandardCategory ? category : category ? 'Other' : '')
@@ -83,7 +85,7 @@ export function OrganizerEventFormPage() {
       setStatus(event.status)
       setForm({ title: event.title || '', description: event.description || '', category_name: category, department_name: event.department_name || '', venue: event.venue || '', start_at: eventToInput(event.start_at), end_at: eventToInput(event.end_at), registration_deadline: eventToInput(event.registration_deadline), capacity: event.capacity || '' })
     }).catch((problem) => setError(problem.message)).finally(() => setLoading(false))
-  }, [eventId, user?.id])
+  }, [eventId, user?.id, isAdmin])
   const update = (name) => (event) => setForm((current) => ({ ...current, [name]: event.target.value }))
   const changeCategory = (event) => {
     const choice = event.target.value
@@ -106,21 +108,26 @@ export function OrganizerEventFormPage() {
     setBusy(true)
     try {
       if (editMode) {
-        await updateEvent(eventId, { ...eventPayload(form), status })
+        const payload = { ...eventPayload(form), status }
+        if (isAdmin) await adminUpdateEvent(eventId, payload)
+        else await updateEvent(eventId, payload)
         const emailError = await sendEventEmail('event_updated', eventId)
         notify(emailError ? 'Event updated. Email delivery is not configured yet.' : 'Event updated and attendees notified.')
-        navigate('/organizer/events')
+        navigate(eventCollectionPath)
       } else {
-        const created = await saveEvent({ ...eventPayload(form), organizer_id: user.id, status: 'PUBLISHED' })
+        const payload = eventPayload(form)
+        const createdEventId = isAdmin
+          ? await adminCreateEvent(payload)
+          : (await saveEvent({ ...payload, organizer_id: user.id, status: 'PUBLISHED' })).event_id
         notify('Your event is published to the campus calendar.')
-        navigate('/organizer/events/' + created.event_id + '/edit')
+        navigate(eventCollectionPath + '/' + createdEventId + '/edit')
       }
     } catch (problem) { setError(friendlyError(problem)) } finally { setBusy(false) }
   }
   if (loading) return <Workspace><Loading /></Workspace>
-  return <Workspace><Link className="back-link" to="/organizer/events">← Back to your events</Link><PageTitle eyebrow="ORGANIZER STUDIO" title={editMode ? 'Shape the details' : 'Bring people together'} description={editMode ? 'Keep the information clear and up to date.' : 'Make a little room on the calendar for something good.'} />
+  return <Workspace><Link className="back-link" to={eventCollectionPath}>← Back to your events</Link><PageTitle eyebrow={isAdmin ? "MEHFIL ADMINISTRATION" : "ORGANIZER STUDIO"} title={editMode ? 'Shape the details' : 'Bring people together'} description={editMode ? 'Keep the information clear and up to date.' : 'Make a little room on the calendar for something good.'} />
     {error && <p className="form-error form-error-box">{error}</p>}
-    <form className="form-card event-form" onSubmit={submit}><div className="form-two"><Field label="Event title"><input required maxLength="120" value={form.title} onChange={update('title')} /></Field><Field label="Category"><select required value={categoryChoice} onChange={changeCategory}><option value="">Select a category</option>{EVENT_CATEGORIES.map((category) => <option key={category} value={category}>{category}</option>)}<option value="Other">Other — enter your own</option></select></Field></div>{categoryChoice === 'Other' && <Field label="Custom category"><input required maxLength="80" placeholder="Enter an event category" value={customCategory} onChange={changeCustomCategory} /></Field>}<Field label="Description"><textarea required rows="5" value={form.description} onChange={update('description')} /></Field><div className="form-two"><Field label="Department"><input required value={form.department_name} onChange={update('department_name')} /></Field><Field label="Venue"><input required value={form.venue} onChange={update('venue')} /></Field></div><div className="form-three"><Field label="Starts"><input required type="datetime-local" value={form.start_at} onChange={update('start_at')} /></Field><Field label="Ends"><input required type="datetime-local" value={form.end_at} onChange={update('end_at')} /></Field><Field label="Registration deadline"><input required={!editMode} type="datetime-local" value={form.registration_deadline} onChange={update('registration_deadline')} /></Field></div><Field label="Capacity"><input min="1" type="number" placeholder="Leave blank for open capacity" value={form.capacity} onChange={update('capacity')} /></Field>{editMode && <div className="form-status-note"><StatusBadge value={status} /> Event status uses the supported campus statuses.</div>}<div className="form-actions"><Button variant="outline" type="button" onClick={() => navigate('/organizer/events')}>Cancel</Button><Button disabled={busy}>{busy ? 'Saving…' : editMode ? 'Save changes' : 'Publish event'} <ArrowUpRight size={16} /></Button></div></form>
+    <form className="form-card event-form" onSubmit={submit}><div className="form-two"><Field label="Event title"><input required maxLength="120" value={form.title} onChange={update('title')} /></Field><Field label="Category"><select required value={categoryChoice} onChange={changeCategory}><option value="">Select a category</option>{EVENT_CATEGORIES.map((category) => <option key={category} value={category}>{category}</option>)}<option value="Other">Other — enter your own</option></select></Field></div>{categoryChoice === 'Other' && <Field label="Custom category"><input required maxLength="80" placeholder="Enter an event category" value={customCategory} onChange={changeCustomCategory} /></Field>}<Field label="Description"><textarea required rows="5" value={form.description} onChange={update('description')} /></Field><div className="form-two"><Field label="Department"><input required value={form.department_name} onChange={update('department_name')} /></Field><Field label="Venue"><input required value={form.venue} onChange={update('venue')} /></Field></div><div className="form-three"><Field label="Starts"><input required type="datetime-local" value={form.start_at} onChange={update('start_at')} /></Field><Field label="Ends"><input required type="datetime-local" value={form.end_at} onChange={update('end_at')} /></Field><Field label="Registration deadline"><input required={!editMode} type="datetime-local" value={form.registration_deadline} onChange={update('registration_deadline')} /></Field></div><Field label="Capacity"><input min="1" type="number" placeholder="Leave blank for open capacity" value={form.capacity} onChange={update('capacity')} /></Field>{editMode && <div className="form-status-note"><StatusBadge value={status} /> Event status uses the supported campus statuses.</div>}<div className="form-actions"><Button variant="outline" type="button" onClick={() => navigate(eventCollectionPath)}>Cancel</Button><Button disabled={busy}>{busy ? 'Saving…' : editMode ? 'Save changes' : 'Publish event'} <ArrowUpRight size={16} /></Button></div></form>
   </Workspace>
 }
 

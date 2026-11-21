@@ -1,4 +1,5 @@
 ﻿import { useEffect, useState } from 'react'
+import { useMemo } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { ArrowRight, ArrowUpRight, CalendarDays, Check, ClipboardCheck, MapPin, Moon, Sparkles, Sun, Ticket, Users, X } from 'lucide-react'
 import { Button, EmptyState, ErrorState, EventCard, Field, Loading, PageTitle, SectionHeading, StatCard, StatusBadge, useToast } from '../components/ui'
@@ -7,7 +8,9 @@ import { useTheme } from '../contexts/ThemeContext'
 import { cancelRegistration, fetchEvents, fetchNotifications, fetchRegistrations, sendEventEmail, setAllNotificationsRead, setNotificationRead, updateAuthMetadata, updateProfile } from '../services/api'
 import { useRequest, Workspace, EventRows } from './WorkspaceShared'
 import { getSavedEvents } from '../utils/savedEvents'
-import { formatDate, formatTime, friendlyError } from '../utils/format'
+import { formatDate, formatTime, friendlyError, isAlphabeticText, sanitizeAlphabeticText } from '../utils/format'
+import { sanitizePhoneNumber } from '../utils/format'
+import { parsePhoneNumberFromString } from 'libphonenumber-js/max'
 
 export function StudentDashboard() {
   const { user, profile } = useAuth()
@@ -62,6 +65,7 @@ export function ProfilePage() {
   const metadata = user?.user_metadata || {}
   const organizerAccount = profile?.role === 'ORGANIZER' || metadata.register_as === 'ORGANIZER'
   const [form, setForm] = useState({})
+  const [savedForm, setSavedForm] = useState({})
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
@@ -72,7 +76,7 @@ export function ProfilePage() {
   const navigate = useNavigate()
   const notify = useToast()
 
-  useEffect(() => setForm({
+  const initialForm = useMemo(() => ({
     full_name: profile?.full_name || '',
     department_name: profile?.department_name || '',
     phone_number: profile?.phone_number || '',
@@ -81,10 +85,48 @@ export function ProfilePage() {
     year_of_study: metadata.year_of_study || '',
     organization_type: metadata.organization_type || '',
     designation: metadata.designation || '',
-  }), [profile, user])
+  }), [profile, user, organizerAccount])
+  const editableFields = organizerAccount
+    ? ['full_name', 'phone_number', 'organization_name', 'organization_type', 'designation']
+    : ['full_name', 'phone_number', 'department_name', 'college_name', 'year_of_study']
+  const alphabeticFields = organizerAccount
+    ? [['full_name', 'Full name'], ['organization_name', 'Organization Name'], ['organization_type', 'Organization Type'], ['designation', 'Designation']]
+    : [['full_name', 'Full name'], ['department_name', 'Department'], ['college_name', 'College']]
+  const invalidAlphabeticField = alphabeticFields.find(([key]) => !isAlphabeticText(form[key] || ''))
+  const alphabeticError = invalidAlphabeticField
+    ? invalidAlphabeticField[1] + ' can contain letters and spaces only.'
+    : ''
+  const parsedPhone = form.phone_number ? parsePhoneNumberFromString(form.phone_number) : null
+  const phoneError = form.phone_number && !parsedPhone?.isValid()
+    ? 'Enter a valid phone number with its country code, such as +91 7045311328.'
+    : ''
+  const hasChanges = editableFields.some((key) => (form[key] ?? '') !== (savedForm[key] ?? ''))
+
+  useEffect(() => {
+    setForm(initialForm)
+    setSavedForm(initialForm)
+  }, [initialForm])
+
+  const updateProfileField = (name, lettersOnly = false) => (event) => {
+    const value = name === 'phone_number'
+      ? sanitizePhoneNumber(event.target.value)
+      : lettersOnly ? sanitizeAlphabeticText(event.target.value) : event.target.value
+    setError('')
+    setForm((current) => ({ ...current, [name]: value }))
+  }
 
   const submit = async (event) => {
-    event.preventDefault(); setBusy(true); setError(''); setMessage('')
+    event.preventDefault()
+    if (!hasChanges || busy) return
+    if (invalidAlphabeticField) {
+      setError(alphabeticError)
+      return
+    }
+    if (phoneError) {
+      setError(phoneError)
+      return
+    }
+    setBusy(true); setError(''); setMessage('')
     const editable = {
       full_name: (form.full_name || '').trim(),
       phone_number: (form.phone_number || '').trim(),
@@ -98,6 +140,9 @@ export function ProfilePage() {
       await updateProfile(user.id, editable)
       await updateAuthMetadata(metadataUpdate)
       await refreshProfile()
+      const updatedForm = { ...form, ...editable, ...metadataUpdate }
+      setForm(updatedForm)
+      setSavedForm(updatedForm)
       setMessage('Your profile has been updated.')
       notify('Profile saved.')
     } catch (problem) { setError(friendlyError(problem)) } finally { setBusy(false) }
@@ -119,25 +164,25 @@ export function ProfilePage() {
   }
 
   return <Workspace><PageTitle eyebrow="YOUR ACCOUNT" title="Your profile" description="Keep your campus details up to date." />
-    {organizerAccount && profile?.role !== 'ORGANIZER' && <div className="notice-box profile-notice">Your organizer request is saved. Organizer access activates after the secure onboarding function updates your database role.</div>}
+    {organizerAccount && profile?.role !== 'ORGANIZER' && <div className="notice-box profile-notice">Your organizer request has been received. Organizer features will be available once your account is activated.</div>}
     <div className="profile-layout"><aside className="profile-card"><div className="profile-avatar">{(profile?.full_name || 'M').slice(0, 1).toUpperCase()}</div><h2>{profile?.full_name || 'MEHFIL member'}</h2><p>{profile?.email}</p><StatusBadge value={profile?.role} /><dl><dt>Account status</dt><dd>{profile?.is_active ? 'Active' : 'Inactive'}</dd><dt>Member since</dt><dd>{formatDate(profile?.created_at)}</dd></dl></aside>
       <div className="profile-main-column">
         <form className="form-card" onSubmit={submit}><h2>Personal details</h2><p>Your role and account access are controlled by the database.</p>
-          <Field label="Full name"><input required value={form.full_name || ''} onChange={(e) => setForm({ ...form, full_name: e.target.value })} /></Field>
-          <div className="form-two"><Field label="Email address"><input value={profile?.email || ''} disabled /></Field><Field label="Phone number"><input type="tel" value={form.phone_number || ''} onChange={(e) => setForm({ ...form, phone_number: e.target.value })} /></Field></div>
+          <Field label="Full name"><input required autoComplete="name" placeholder="Your full name" value={form.full_name || ''} onChange={updateProfileField('full_name', true)} /></Field>
+          <div className="form-two"><Field label="Email address"><input value={profile?.email || ''} disabled /></Field><Field label="Phone number"><input type="tel" inputMode="tel" autoComplete="tel" placeholder="+91 7045311328" value={form.phone_number || ''} onChange={updateProfileField('phone_number')} /></Field></div>
           <Field label="Role"><input value={profile?.role || ''} disabled /></Field>
           {organizerAccount ? <>
             <span className="form-section-tag">Organiser details</span>
-            <Field label="Organization Name"><input required value={form.organization_name || ''} onChange={(e) => setForm({ ...form, organization_name: e.target.value })} /></Field>
-            <Field label="Organization Type"><input placeholder="College Club, Student Council, Department, External Organization" value={form.organization_type || ''} onChange={(e) => setForm({ ...form, organization_type: e.target.value })} /></Field>
-            <Field label="Designation"><input placeholder="President, Secretary, Coordinator, Faculty, etc." value={form.designation || ''} onChange={(e) => setForm({ ...form, designation: e.target.value })} /></Field>
+            <Field label="Organization Name"><input required value={form.organization_name || ''} onChange={updateProfileField('organization_name', true)} /></Field>
+            <Field label="Organization Type"><input placeholder="College Club, Student Council, Department, External Organization" value={form.organization_type || ''} onChange={updateProfileField('organization_type', true)} /></Field>
+            <Field label="Designation"><input placeholder="President, Secretary, Coordinator, Faculty, etc." value={form.designation || ''} onChange={updateProfileField('designation', true)} /></Field>
           </> : <>
             <span className="form-section-tag">Student details</span>
-            <div className="form-two"><Field label="Roll Number"><input value={profile?.student_number || ''} disabled /></Field><Field label="Department"><input value={form.department_name || ''} onChange={(e) => setForm({ ...form, department_name: e.target.value })} /></Field></div>
-            <div className="form-two"><Field label="College"><input placeholder="Institution name" value={form.college_name || ''} onChange={(e) => setForm({ ...form, college_name: e.target.value })} /></Field><Field label="Year of Study"><input placeholder="First, Second, Third, Fourth year" value={form.year_of_study || ''} onChange={(e) => setForm({ ...form, year_of_study: e.target.value })} /></Field></div>
+            <div className="form-two"><Field label="Roll Number"><input value={profile?.student_number || ''} disabled /></Field><Field label="Department"><input value={form.department_name || ''} onChange={updateProfileField('department_name', true)} /></Field></div>
+            <div className="form-two"><Field label="College"><input placeholder="Institution name" value={form.college_name || ''} onChange={updateProfileField('college_name', true)} /></Field><Field label="Year of Study"><input placeholder="First, Second, Third, Fourth year" value={form.year_of_study || ''} onChange={(e) => setForm({ ...form, year_of_study: e.target.value })} /></Field></div>
           </>}
-          {error && <p className="form-error" role="alert">{error}</p>}{message && <p className="form-success" role="status">{message}</p>}
-          <Button disabled={busy}>{busy ? 'Saving…' : 'Save changes'} <Check size={16} /></Button>
+          {(error || alphabeticError || phoneError) && <p className="form-error" role="alert">{error || alphabeticError || phoneError}</p>}{message && <p className="form-success" role="status">{message}</p>}
+          <Button disabled={busy || !hasChanges || Boolean(invalidAlphabeticField) || Boolean(phoneError)}>{busy ? 'Saving…' : 'Save changes'} <Check size={16} /></Button>
         </form>
         <section className="form-card account-actions-card"><div><span className="eyebrow">PREFERENCES</span><h2>Appearance</h2><p>Choose the look that feels right for you.</p></div><div className="theme-preference"><span>{theme === 'dark' ? 'Dark theme' : 'Light theme'}</span><Button variant="outline" onClick={toggleTheme}>Switch to {theme === 'dark' ? 'light' : 'dark'} {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}</Button></div>
           <div className="account-action-row"><div><strong>Log out</strong><span>Sign out of MEHFIL on this device.</span></div><Button variant="outline" onClick={logout}>Log out</Button></div>

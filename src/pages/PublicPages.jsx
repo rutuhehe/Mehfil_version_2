@@ -7,28 +7,57 @@ import {
 import { useAuth } from '../contexts/AuthContext'
 import { useTheme } from '../contexts/ThemeContext'
 import { Button, EmptyState, ErrorState, EventCard, Field, Footer, Loading, PageFrame, SectionHeading, StatusBadge, useToast } from '../components/ui'
-import { cancelRegistration, fetchEvent, fetchEvents, fetchRegistrations, registerForEvent, sendEventEmail } from '../services/api'
+import { cancelRegistration, fetchCommunityMemberCount, fetchEvent, fetchEvents, fetchRegistrations, registerForEvent, sendEventEmail } from '../services/api'
 import { dashboardForRole, filterEvents, isAvailableEvent } from '../utils/events'
 import { supabase } from '../lib/supabase'
-import { formatDate, formatTime, friendlyError } from '../utils/format'
+import { formatDate, formatTime, friendlyError, sanitizeAlphabeticText } from '../utils/format'
 import mehfilLogo from '../assets/mehfil-logo.jpeg'
+import { getCountries, getCountryCallingCode, parsePhoneNumberFromString } from 'libphonenumber-js/max'
+
+const EMAIL_DOMAIN_PATTERN = /^[^\s@]+@[a-z\d](?:[a-z\d-]*[a-z\d])?(?:\.[a-z\d](?:[a-z\d-]*[a-z\d])?)*\.[a-z]{2,}$/i
+const hasSpecialCharacter = (value) => /[\p{P}\p{S}]/u.test(value)
+const getPasswordHint = (value) => {
+  if (!value) return 'Use 8+ characters with lowercase and uppercase letters, a number, and a special character.'
+  const missing = []
+  if (value.length < 8) missing.push('8 characters')
+  if (!/[a-z]/.test(value)) missing.push('a lowercase letter')
+  if (!/[A-Z]/.test(value)) missing.push('an uppercase letter')
+  if (!/\d/.test(value)) missing.push('a number')
+  if (!hasSpecialCharacter(value)) missing.push('a special character')
+  if (!missing.length) return 'Password meets all requirements.'
+  return `Add ${missing.join(', ')} to meet the password requirements.`
+}
+const isPasswordCompliant = (value) => value.length >= 8 && /[a-z]/.test(value) && /[A-Z]/.test(value) && /\d/.test(value) && hasSpecialCharacter(value)
+const COUNTRY_NAMES = new Intl.DisplayNames(['en'], { type: 'region' })
+const PHONE_COUNTRIES = getCountries()
+  .map((code) => ({
+    code,
+    name: COUNTRY_NAMES.of(code) || code,
+    callingCode: getCountryCallingCode(code),
+  }))
+  .sort((first, second) => first.name.localeCompare(second.name))
 
 export function HomePage() {
   const [events, setEvents] = useState([])
+  const [communityCount, setCommunityCount] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   useEffect(() => {
     fetchEvents({ publicOnly: true }).then((data) => setEvents(data.filter((event) => new Date(event.start_at) > new Date()).slice(0, 3)))
       .catch((problem) => setError(problem.message)).finally(() => setLoading(false))
+    fetchCommunityMemberCount().then((count) => setCommunityCount(Number(count) || 0)).catch(() => {})
   }, [])
   const { user } = useAuth()
+  const communityNote = communityCount
+    ? 'Made by ' + communityCount.toLocaleString() + ' active campus ' + (communityCount === 1 ? 'member' : 'members')
+    : 'Made by campus, for campus'
   return <PageFrame>
     <section className="hero"><div className="hero-inner">
       <div className="hero-copy"><div className="hero-eyebrow"><span></span> YOUR CAMPUS, IN GOOD COMPANY</div>
         <h1>Your campus.<br /><em>Your people.</em><br />Your moments.</h1>
         <p>The little moments become the big memories. Find the gatherings, ideas, and people that make campus feel like yours.</p>
         <div className="hero-actions"><Link className="button button-primary button-large" to="/events">Explore events <ArrowUpRight size={18} /></Link>{!user && <Link className="button button-outline button-large" to="/register">Join MEHFIL <ArrowRight size={17} /></Link>}</div>
-        <div className="hero-note"><div className="avatar-stack"><i>M</i><i>+</i><i>Y</i></div><span>Made by campus, for campus</span></div>
+        <div className="hero-note"><div className="avatar-stack"><i>M</i><i>+</i><i>Y</i></div><span>{communityNote}</span></div>
       </div>
       <div className="hero-visual" role="img" aria-label="Students gathering outdoors at a campus cultural event">
         <div className="hero-photo"></div><div className="hero-photo-wash"></div>
@@ -56,15 +85,15 @@ export function HomePage() {
     <section className="section section-fit"><div className="container">
       <div className="home-editorial-heading"><div><span className="eyebrow">EXPLORE BY ENERGY</span><h2>Find your fit</h2></div><Link className="text-link" to="/events">Explore events <ArrowRight size={16} /></Link></div>
       <div className="fit-grid">{[
-        [BookOpen, 'Learn', 'Talks, workshops, and fresh ideas to take with you.'],
-        [Trophy, 'Compete', 'Challenges, tournaments, and friendly rivalries.'],
-        [Sparkles, 'Create', 'Make something, share an idea, and try a new skill.'],
-        [Coffee, 'Chill', 'Relaxed hangouts and easy friendships for a slower vibe.'],
-        [Users, 'Network', 'Meet future collaborators, peers, and mentors in person.'],
-        [HeartHandshake, 'Give back', 'Make your campus stronger and more connected.'],
-      ].map(([Icon, title, description]) => <article className="fit-card" key={title}>
+        [BookOpen, 'Learn', 'Talks, workshops, and fresh ideas to take with you.', ['Academic', 'Workshop']],
+        [Trophy, 'Compete', 'Challenges, tournaments, and friendly rivalries.', ['Sports', 'Technology']],
+        [Sparkles, 'Create', 'Make something, share an idea, and try a new skill.', ['Arts', 'Music', 'Technology']],
+        [Coffee, 'Chill', 'Relaxed hangouts and easy friendships for a slower vibe.', ['Social', 'Culture', 'Wellness']],
+        [Users, 'Network', 'Meet future collaborators, peers, and mentors in person.', ['Career', 'Community']],
+        [HeartHandshake, 'Give back', 'Make your campus stronger and more connected.', ['Community', 'Culture', 'Wellness']],
+      ].map(([Icon, title, description, categories]) => <Link className="fit-card" key={title} to={'/events?categories=' + encodeURIComponent(categories.join(','))} aria-label={'Explore ' + categories.join(', ') + ' events'}>
         <span className="fit-icon"><Icon size={23} strokeWidth={1.8} /></span><h3>{title}</h3><p>{description}</p>
-      </article>)}</div>
+      </Link>)}</div>
     </div></section>
 
     <section className="section section-momentum"><div className="container">
@@ -86,6 +115,7 @@ export function HomePage() {
 
 export function ExplorePage() {
   const [searchParams, setSearchParams] = useSearchParams()
+  const categoryFocus = searchParams.get('categories') || ''
   const [events, setEvents] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -102,17 +132,37 @@ export function ExplorePage() {
   useEffect(() => {
     fetchEvents({ publicOnly: true }).then(setEvents).catch((problem) => setError(problem.message)).finally(() => setLoading(false))
   }, [])
-  const filtered = useMemo(() => filterEvents(events, filters), [events, filters])
+  const filtered = useMemo(() => {
+    const matches = filterEvents(events, filters)
+    const categoriesInFocus = categoryFocus.split(',').filter(Boolean)
+    return categoriesInFocus.length
+      ? matches.filter((event) => categoriesInFocus.includes(event.category_name))
+      : matches
+  }, [events, filters, categoryFocus])
   const categories = [...new Set(events.map((event) => event.category_name).filter(Boolean))].sort()
   const departments = [...new Set(events.map((event) => event.department_name).filter(Boolean))].sort()
   const locations = [...new Set(events.map((event) => event.venue).filter(Boolean))].sort()
   const change = (name, value) => {
     setFilters((current) => ({ ...current, [name]: value }))
-    if (name === 'query') {
+    if (name === 'category') {
+      const next = new URLSearchParams(searchParams)
+      next.delete('categories')
+      value ? next.set('category', value) : next.delete('category')
+      setSearchParams(next, { replace: true })
+    } else if (name === 'query') {
       const next = new URLSearchParams(searchParams)
       value ? next.set('q', value) : next.delete('q')
       setSearchParams(next, { replace: true })
     }
+  }
+  const clearFilters = () => {
+    setFilters({ query: '', category: '', department: '', location: '', from: '', to: '', upcoming: true })
+    setSearchParams(new URLSearchParams(), { replace: true })
+  }
+  const clearCategoryFocus = () => {
+    const next = new URLSearchParams(searchParams)
+    next.delete('categories')
+    setSearchParams(next, { replace: true })
   }
   return <PageFrame><section className="explore-hero"><div className="container"><span className="eyebrow">THE CAMPUS CALENDAR</span><h1>Find your next <em>thing.</em></h1><p>Good ideas, new people, and plans worth leaving your room for.</p><div className="explore-search"><Search size={19} /><input aria-label="Search events" value={filters.query} onChange={(event) => change('query', event.target.value)} placeholder="Try a title, place, or idea" /><span>SEARCH</span></div></div></section>
     <section className="section explore-results"><div className="container">
@@ -124,10 +174,11 @@ export function ExplorePage() {
         <label className="filter-control"><span>Until</span><input type="date" value={filters.to} onChange={(event) => change('to', event.target.value)} /></label>
         <label className="upcoming-toggle"><input type="checkbox" checked={filters.upcoming} onChange={(event) => change('upcoming', event.target.checked)} /><span>Upcoming only</span></label>
       </div>
+      {categoryFocus && <div className="category-focus-summary"><span>Showing {categoryFocus.split(',').filter(Boolean).join(' or ')} events</span><button type="button" className="text-link" onClick={clearCategoryFocus}>Clear category focus</button></div>}
       <div className="results-heading"><span>{loading ? 'Looking around…' : filtered.length + ' ' + (filtered.length === 1 ? 'event' : 'events')}</span><span>Sorted by date <ArrowDownRight size={15} /></span></div>
       {loading ? <Loading label="Loading published events…" /> : error ? <ErrorState message={friendlyError(error)} /> : filtered.length ?
         <div className="event-grid">{filtered.map((event) => <EventCard key={event.event_id} event={event} userId={user?.id} />)}</div> :
-        <EmptyState icon={Compass} title="No events on this wavelength" description={events.length ? 'Try a different search or clear a filter to see what else is happening.' : 'There are no published events to show right now. Check back when organizers add to the calendar.'} action={events.length > 0 && <button className="text-link" onClick={() => setFilters({ query: '', category: '', department: '', location: '', from: '', to: '', upcoming: true })}>Clear filters <ArrowRight size={16} /></button>} />}
+        <EmptyState icon={Compass} title="No events on this wavelength" description={events.length ? 'Try a different search or clear a filter to see what else is happening.' : 'There are no published events to show right now. Check back when organizers add to the calendar.'} action={events.length > 0 && <button className="text-link" onClick={clearFilters}>Clear filters <ArrowRight size={16} /></button>} />}
     </div></section></PageFrame>
 }
 
@@ -209,7 +260,7 @@ export function AboutPage() {
 }
 
 export function ContactPage() {
-  return <PageFrame><section className="about-hero contact-hero"><div className="container"><span className="eyebrow">GET IN TOUCH</span><h1>We’d love to<br /><em>hear from you.</em></h1><p>Questions about MEHFIL, an event, or bringing your campus community together? Send us a note and we’ll be glad to hear from you.</p><a className="button button-primary" href="mailto:hello@mehfil.events">Email MEHFIL <ArrowUpRight size={17} /></a></div></section><section className="section"><div className="container about-values contact-values"><div><Mail /><h2>General enquiries</h2><p>Questions, feedback, or ideas for making campus life better.</p><a href="mailto:hello@mehfil.events">hello@mehfil.events</a></div><div><CalendarDays /><h2>Events & registration</h2><p>Need help finding an event or managing your registration? Get in touch by email.</p><a href="mailto:hello@mehfil.events">Email event support</a></div><div><Users /><h2>Campus organizers</h2><p>Want to bring your club, department, or organization onto MEHFIL?</p><a href="mailto:hello@mehfil.events">Talk to our team</a></div></div></section></PageFrame>
+  return <PageFrame><section className="about-hero contact-hero"><div className="container"><span className="eyebrow">GET IN TOUCH</span><h1>We’d love to<br /><em>hear from you.</em></h1><p>Questions about MEHFIL, an event, or bringing your campus community together? Send us a note and we’ll be glad to hear from you.</p><a className="button button-primary" href="mailto:mehfilofficial.events@gmail.com">Email MEHFIL <ArrowUpRight size={17} /></a></div></section><section className="section"><div className="container about-values contact-values"><div><Mail /><h2>General enquiries</h2><p>Questions, feedback, or ideas for making campus life better.</p><a href="mailto:mehfilofficial.events@gmail.com">mehfilofficial.events@gmail.com</a></div><div><CalendarDays /><h2>Events & registration</h2><p>Need help finding an event or managing your registration? Get in touch by email.</p><a href="mailto:mehfilofficial.events@gmail.com">Email event support</a></div><div><Users /><h2>Campus organizers</h2><p>Want to bring your club, department, or organization onto MEHFIL?</p><a href="mailto:mehfilofficial.events@gmail.com">Talk to our team</a></div></div></section></PageFrame>
 }
 
 function AuthFrame({ children, title, subtitle, aside = false }) {
@@ -245,42 +296,77 @@ export function LoginPage() {
 }
 
 export function RegisterPage() {
-  const { user, profile, signUp, signOut, configured } = useAuth()
+  const { user, profile, signUp, resendSignupConfirmation, signOut, configured } = useAuth()
   const navigate = useNavigate()
   const [accountType, setAccountType] = useState('STUDENT')
+  const [phoneCountry, setPhoneCountry] = useState('')
   const [show, setShow] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  const [confirmationPending, setConfirmationPending] = useState(false)
+  const [confirmationEmail, setConfirmationEmail] = useState('')
+  const [resendBusy, setResendBusy] = useState(false)
+  const [resendMessage, setResendMessage] = useState('')
+  const [resendError, setResendError] = useState('')
   const [form, setForm] = useState({
     fullName: '', phone: '', email: '', password: '', confirm: '',
     studentNumber: '', department: '', collegeName: '', yearOfStudy: '',
     organizationName: '', organizationType: '', designation: '',
   })
-  const update = (name) => (event) => setForm((current) => ({ ...current, [name]: event.target.value }))
+  const update = (name, lettersOnly = false) => (event) => {
+    const value = name === 'studentNumber'
+      ? event.target.value.replace(/[^\p{L}\p{N}]/gu, '')
+      : name === 'phone' ? event.target.value.replace(/\D/g, '')
+        : lettersOnly ? sanitizeAlphabeticText(event.target.value) : event.target.value
+    setForm((current) => ({ ...current, [name]: value }))
+  }
   const organizerPending = user && profile?.role === 'STUDENT' && user.user_metadata?.register_as === 'ORGANIZER'
   if (user && profile && !organizerPending) return <Navigate to={dashboardForRole(profile.role)} replace />
 
   const submit = async (event) => {
     event.preventDefault()
     setError(''); setSuccess('')
-    if (form.password.length < 8) return setError('Choose a password with at least 8 characters.')
+    setConfirmationPending(false); setConfirmationEmail(''); setResendMessage(''); setResendError('')
+    if (accountType === 'STUDENT' && !/^[\p{L}\p{N}]+$/u.test(form.studentNumber)) {
+      return setError('Roll Number can contain letters and numbers only.')
+    }
+    if (!phoneCountry) return setError('Select your country calling code.')
+    const phoneNumber = parsePhoneNumberFromString(form.phone.trim(), {
+      defaultCountry: phoneCountry,
+      extract: false,
+    })
+    if (!phoneNumber?.isValid() || phoneNumber.country !== phoneCountry) {
+      return setError('Enter a valid phone number for the selected country code.')
+    }
+    if (!EMAIL_DOMAIN_PATTERN.test(form.email.trim())) return setError('Enter a valid email address with a domain, such as name@example.com.')
+    if (!isPasswordCompliant(form.password)) return
     if (form.password !== form.confirm) return setError('Your passwords do not match.')
     setBusy(true)
     try {
-      const result = await signUp({ ...form, accountType })
+      const result = await signUp({ ...form, phone: phoneNumber.number, accountType })
       if (result.session && accountType === 'STUDENT') {
         navigate('/student', { replace: true })
       } else if (result.session && result.profile?.role === 'ORGANIZER') {
         navigate('/organizer', { replace: true })
       } else if (result.session && result.organizerPending) {
         setSuccess('Your account is signed in. Organizer access is waiting for the secure onboarding function to activate.')
-      } else if (accountType === 'ORGANIZER') {
-        setSuccess('Check your email to verify your account. Organizer access will activate when you sign in.')
+      } else if (result.user && !result.session) {
+        setConfirmationPending(true)
+        setConfirmationEmail(form.email.trim())
+        setSuccess(`We sent a confirmation link to ${form.email.trim()}. Check your inbox and spam folder to verify your account.`)
       } else {
-        setSuccess('Your student account is ready to verify. Check your email for the confirmation link, then log in.')
+        setSuccess('Your signup was accepted. Check your email for next steps.')
       }
     } catch (problem) { setError(friendlyError(problem)) } finally { setBusy(false) }
+  }
+
+  const resendConfirmation = async () => {
+    setResendBusy(true); setResendMessage(''); setResendError('')
+    try {
+      await resendSignupConfirmation(confirmationEmail)
+      setResendMessage('Supabase accepted the resend request. Check your inbox and spam folder. If no email arrives, the project email delivery settings need attention.')
+    } catch (problem) { setResendError(friendlyError(problem)) } finally { setResendBusy(false) }
   }
 
   return <AuthFrame title="Create Account" subtitle="Join the platform and get started." aside>
@@ -292,24 +378,25 @@ export function RegisterPage() {
         <button type="button" role="radio" aria-checked={accountType === 'ORGANIZER'} className={accountType === 'ORGANIZER' ? 'account-type-active' : ''} onClick={() => setAccountType('ORGANIZER')}>Organiser</button>
       </div></fieldset>
 
-      <Field label="Full name"><input required autoComplete="name" placeholder="Enter your full name" value={form.fullName} onChange={update('fullName')} /></Field>
+      <Field label="Full name"><input required autoComplete="name" placeholder="Enter your full name" value={form.fullName} onChange={update('fullName', true)} /></Field>
       {accountType === 'STUDENT' ? <div className="conditional-fields">
         <span className="form-section-tag">Student details</span>
-        <div className="form-two"><Field label="Roll Number"><input required value={form.studentNumber} onChange={update('studentNumber')} /></Field><Field label="Department"><input required placeholder="Department name" value={form.department} onChange={update('department')} /></Field></div>
-        <div className="form-two"><Field label="College"><input required placeholder="Institution name" value={form.collegeName} onChange={update('collegeName')} /></Field><Field label="Year of Study"><input required placeholder="First, Second, Third, Fourth year" value={form.yearOfStudy} onChange={update('yearOfStudy')} /></Field></div>
+        <div className="form-two"><Field label="Roll Number"><input required placeholder="Enter your roll number" value={form.studentNumber} onChange={update('studentNumber')} /></Field><Field label="Department"><input required placeholder="Department name" value={form.department} onChange={update('department', true)} /></Field></div>
+        <div className="form-two"><Field label="College"><input required placeholder="Institution name" value={form.collegeName} onChange={update('collegeName', true)} /></Field><Field label="Year of Study"><input required placeholder="First, Second, Third, Fourth year" value={form.yearOfStudy} onChange={update('yearOfStudy')} /></Field></div>
       </div> : <div className="conditional-fields">
         <span className="form-section-tag">Organiser details</span>
-        <Field label="Organization Name"><input required placeholder="Enter organization name" value={form.organizationName} onChange={update('organizationName')} /></Field>
-        <Field label="Organization Type"><input required placeholder="College Club, Student Council, Department, External Organization" value={form.organizationType} onChange={update('organizationType')} /></Field>
-        <Field label="Designation"><input required placeholder="President, Secretary, Coordinator, Faculty, etc." value={form.designation} onChange={update('designation')} /></Field>
+        <Field label="Organization Name"><input required placeholder="Enter organization name" value={form.organizationName} onChange={update('organizationName', true)} /></Field>
+        <Field label="Organization Type"><input required placeholder="College Club, Student Council, Department, External Organization" value={form.organizationType} onChange={update('organizationType', true)} /></Field>
+        <Field label="Designation"><input required placeholder="President, Secretary, Coordinator, Faculty, etc." value={form.designation} onChange={update('designation', true)} /></Field>
       </div>}
 
-      <Field label="Phone number"><input type="tel" required autoComplete="tel" placeholder="Enter your phone number" value={form.phone} onChange={update('phone')} /></Field>
-      <Field label="Email address"><input type="email" required autoComplete="email" placeholder="example@email.com" value={form.email} onChange={update('email')} /></Field>
-      <Field label="Password"><span className="password-field"><input type={show ? 'text' : 'password'} required autoComplete="new-password" value={form.password} onChange={update('password')} /><button type="button" onClick={() => setShow(!show)}>{show ? 'Hide' : 'Show'}</button></span></Field>
-      <Field label="Confirm password"><input type={show ? 'text' : 'password'} required autoComplete="new-password" value={form.confirm} onChange={update('confirm')} /></Field>
+      <Field label="Phone number" hint="Choose a country and enter the number in its national format."><div className="phone-input-group"><select required aria-label="Country calling code" value={phoneCountry} onChange={(event) => setPhoneCountry(event.target.value)}><option value="" disabled>Select country code</option>{PHONE_COUNTRIES.map((country) => <option key={country.code} value={country.code}>{country.name} (+{country.callingCode})</option>)}</select><input type="tel" required autoComplete="tel-national" inputMode="tel" placeholder="Local number" value={form.phone} onChange={update('phone')} /></div></Field>
+      <Field label="Email address"><input type="email" required autoComplete="email" maxLength={254} pattern="[^@ ]+@[^@ ]+[.][^@ .]{2,}" title="Enter an email address with a domain, such as name@example.com." placeholder="example@email.com" value={form.email} onChange={update('email')} /></Field>
+      <Field label="Password" hint={getPasswordHint(form.password)} hintClassName={form.password && !isPasswordCompliant(form.password) ? 'field-error' : undefined}><span className="password-field"><input type={show ? 'text' : 'password'} required minLength={8} autoComplete="new-password" placeholder="Choose a password" value={form.password} onChange={update('password')} /><button type="button" onClick={() => setShow(!show)}>{show ? 'Hide' : 'Show'}</button></span></Field>
+      <Field label="Confirm password"><input type={show ? 'text' : 'password'} required autoComplete="new-password" placeholder="Re-enter your password" value={form.confirm} onChange={update('confirm')} /></Field>
       {accountType === 'ORGANIZER' && <p className="form-help">Organizer access is written by the authenticated onboarding function. Admin access is never offered here.</p>}
       {error && <p className="form-error" role="alert">{error}</p>}{success && <p className="form-success" role="status">{success}</p>}
+      {confirmationPending && <div className="notice-box confirmation-pending"><Button type="button" variant="outline" disabled={resendBusy} onClick={resendConfirmation}>{resendBusy ? 'Requesting link…' : 'Resend confirmation email'} <ArrowRight size={15} /></Button>{resendError && <p className="form-error" role="alert">{resendError}</p>}{resendMessage && <p className="form-success" role="status">{resendMessage}</p>}</div>}
       <Button className="full-width" disabled={busy}>{busy ? 'Creating account…' : 'Create account'} <ArrowRight size={17} /></Button>
     </form>}
     {!organizerPending && <p className="auth-switch">Already have an account? <Link to="/login">Log in</Link></p>}
@@ -330,7 +417,28 @@ export function ForgotPasswordPage() {
       setMessage('If an account exists for this address, a reset link is on its way.')
     } catch (problem) { setError(friendlyError(problem)) } finally { setBusy(false) }
   }
-  return <AuthFrame title="A fresh start." subtitle="We’ll send you a link to reset your password."><form onSubmit={submit} className="auth-form"><Field label="Email address"><input type="email" required value={email} onChange={(event) => setEmail(event.target.value)} /></Field>{error && <p className="form-error">{error}</p>}{message && <p className="form-success">{message}</p>}<Button className="full-width" disabled={busy}>{busy ? 'Sending…' : 'Send reset link'} <ArrowRight size={17} /></Button></form><p className="auth-switch"><Link to="/login">Back to log in</Link></p></AuthFrame>
+  return <AuthFrame title="A fresh start." subtitle="We’ll send you a link to reset your password."><form onSubmit={submit} className="auth-form"><Field label="Email address"><input type="email" required autoComplete="email" placeholder="you@example.com" value={email} onChange={(event) => setEmail(event.target.value)} /></Field>{error && <p className="form-error">{error}</p>}{message && <p className="form-success">{message}</p>}<Button className="full-width" disabled={busy}>{busy ? 'Sending…' : 'Send reset link'} <ArrowRight size={17} /></Button></form><p className="auth-switch"><Link to="/login">Back to log in</Link></p></AuthFrame>
+}
+
+
+export function AuthConfirmPage() {
+  const { user, profile, loading, configured } = useAuth()
+  const [params] = useSearchParams()
+  const callbackError = params.get('error') || params.get('error_code') || params.get('error_description')
+  const emailConfirmed = Boolean(user?.email_confirmed_at || user?.confirmed_at)
+
+  if (!configured) {
+    return <AuthFrame title="Email confirmation unavailable." subtitle="Connect the Supabase project before confirming an account."><p className="notice-box">Supabase is not configured for this app.</p><p className="auth-switch"><Link to="/login">Back to log in</Link></p></AuthFrame>
+  }
+  if (loading) {
+    return <AuthFrame title="Confirming your email…" subtitle="We’re checking the confirmation link."><p className="auth-subtitle" role="status">This should only take a moment.</p></AuthFrame>
+  }
+  if (callbackError || !emailConfirmed) {
+    return <AuthFrame title="We couldn’t confirm this link." subtitle="The link may have expired or already been used."><p className="form-error" role="alert">Request a new confirmation email, then open the newest link.</p><p className="auth-switch"><Link to="/register">Back to registration</Link> · <Link to="/login">Log in</Link></p></AuthFrame>
+  }
+
+  const destination = profile ? dashboardForRole(profile.role) : '/login'
+  return <AuthFrame title="Email confirmed." subtitle="Your MEHFIL account is ready."><p className="form-success" role="status">Your email address has been verified successfully.</p><Link className="button button-primary full-width" to={destination}>{profile ? 'Continue to MEHFIL' : 'Go to log in'} <ArrowRight size={17} /></Link></AuthFrame>
 }
 
 
@@ -339,13 +447,15 @@ export function ResetPasswordPage() {
   const navigate = useNavigate()
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [showConfirm, setShowConfirm] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const submit = async (event) => {
     event.preventDefault()
     setError(''); setSuccess('')
-    if (password.length < 8) return setError('Choose a password with at least 8 characters.')
+    if (!isPasswordCompliant(password)) return
     if (password !== confirm) return setError('Your passwords do not match.')
     setBusy(true)
     try {
@@ -355,7 +465,7 @@ export function ResetPasswordPage() {
       window.setTimeout(() => navigate('/login', { replace: true }), 1100)
     } catch (problem) { setError(friendlyError(problem)) } finally { setBusy(false) }
   }
-  return <AuthFrame title="Choose a new password." subtitle="A fresh password, then you’re back in."><form onSubmit={submit} className="auth-form"><Field label="New password"><input type="password" required autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} /></Field><Field label="Confirm new password"><input type="password" required autoComplete="new-password" value={confirm} onChange={(event) => setConfirm(event.target.value)} /></Field>{error && <p className="form-error" role="alert">{error}</p>}{success && <p className="form-success" role="status">{success}</p>}<Button className="full-width" disabled={busy}>{busy ? 'Updating…' : 'Update password'} <ArrowRight size={17} /></Button></form><p className="auth-switch"><Link to="/login">Back to log in</Link></p></AuthFrame>
+  return <AuthFrame title="Choose a new password." subtitle="A fresh password, then you’re back in."><form onSubmit={submit} className="auth-form"><Field label="New password" hint={getPasswordHint(password)} hintClassName={password && !isPasswordCompliant(password) ? 'field-error' : undefined}><span className="password-field"><input type={showPassword ? 'text' : 'password'} required minLength={8} autoComplete="new-password" placeholder="Choose a password" value={password} onChange={(event) => setPassword(event.target.value)} /><button type="button" aria-label={showPassword ? 'Hide new password' : 'Show new password'} aria-pressed={showPassword} onClick={() => setShowPassword(!showPassword)}>{showPassword ? 'Hide' : 'Show'}</button></span></Field><Field label="Confirm new password"><span className="password-field"><input type={showConfirm ? 'text' : 'password'} required minLength={8} autoComplete="new-password" placeholder="Re-enter your password" value={confirm} onChange={(event) => setConfirm(event.target.value)} /><button type="button" aria-label={showConfirm ? 'Hide confirmation password' : 'Show confirmation password'} aria-pressed={showConfirm} onClick={() => setShowConfirm(!showConfirm)}>{showConfirm ? 'Hide' : 'Show'}</button></span></Field>{error && <p className="form-error" role="alert">{error}</p>}{success && <p className="form-success" role="status">{success}</p>}<Button className="full-width" disabled={busy}>{busy ? 'Updating…' : 'Update password'} <ArrowRight size={17} /></Button></form><p className="auth-switch"><Link to="/login">Back to log in</Link></p></AuthFrame>
 }
 
 

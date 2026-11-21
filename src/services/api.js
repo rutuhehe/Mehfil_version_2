@@ -23,6 +23,10 @@ async function fetchProfilesOptional(userIds) {
   try { return await fetchProfiles(userIds) } catch { return [] }
 }
 
+export async function fetchCommunityMemberCount() {
+  return unwrap(await client().rpc('public_community_member_count'))
+}
+
 export async function fetchEvents({ publicOnly = false, organizerId = null } = {}) {
   let query = client().from('events').select('*').order('start_at', { ascending: true })
   if (publicOnly) query = query.eq('status', 'PUBLISHED')
@@ -100,6 +104,40 @@ export async function updateEvent(eventId, payload) {
   return unwrap(await client().from('events').update(payload).eq('event_id', eventId).select('*').single())
 }
 
+export async function adminCreateEvent(payload) {
+  return unwrap(await client().rpc('admin_create_event', {
+    p_title: payload.title,
+    p_description: payload.description,
+    p_category_name: payload.category_name,
+    p_department_name: payload.department_name,
+    p_venue: payload.venue,
+    p_start_at: payload.start_at,
+    p_end_at: payload.end_at,
+    p_registration_deadline: payload.registration_deadline,
+    p_capacity: payload.capacity,
+  }))
+}
+
+export async function adminUpdateEvent(eventId, payload) {
+  return unwrap(await client().rpc('admin_update_event', {
+    p_event_id: eventId,
+    p_title: payload.title,
+    p_description: payload.description,
+    p_category_name: payload.category_name,
+    p_department_name: payload.department_name,
+    p_venue: payload.venue,
+    p_start_at: payload.start_at,
+    p_end_at: payload.end_at,
+    p_registration_deadline: payload.registration_deadline,
+    p_capacity: payload.capacity,
+    p_status: payload.status,
+  }))
+}
+
+export async function adminDeleteEvent(eventId) {
+  return unwrap(await client().rpc('admin_delete_event', { p_event_id: eventId }))
+}
+
 export async function updateAuthMetadata(payload) {
   const { data, error } = await client().auth.updateUser({ data: payload })
   if (error) throw error
@@ -140,7 +178,20 @@ export async function setUserRole(userId, role) {
 }
 
 export async function setUserActive(userId, isActive) {
-  return unwrap(await client().from('users').update({ is_active: isActive }).eq('user_id', userId))
+  return unwrap(await client().rpc('admin_set_user_active', {
+    p_user_id: userId,
+    p_is_active: isActive,
+  }))
+}
+
+export async function adminDeleteUser(userId) {
+  const { data, error } = await client().functions.invoke('admin-delete-user', { body: { userId } })
+  if (error) {
+    let message = error.message
+    try { message = (await error.context.json()).error || message } catch {}
+    throw new Error(message || 'The account could not be deleted.')
+  }
+  return data
 }
 
 export async function sendEventEmail(type, eventId, registrationId = null) {

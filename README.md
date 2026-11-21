@@ -1,118 +1,40 @@
-# MEHFIL
+﻿# MEHFIL
 
-**Where campus comes together.** MEHFIL helps students discover campus events and gives organizers the tools to publish events, manage registrations, and check in attendees.
+A responsive campus event discovery and management app built with React, Vite, Tailwind CSS, Supabase, and Lucide.
 
-## What you can do
+## Run locally
 
-- Browse and filter published events by category, department, date, and location.
-- Register for events, manage registrations, save events, and receive in-app updates.
-- Create and manage events as an organizer, review participants, and record attendance.
-- Manage users, events, registrations, and attendance with an administrator account.
-- Switch between light and dark themes.
-- Use a separate Java command-line tool to validate exported event tickets offline.
+1. Install Node.js 20+ and Java 17+.
+2. Copy .env.example to .env.local and set the existing Supabase project URL and publishable/anon key.
+3. Run npm.cmd install, then npm.cmd run dev on Windows (or npm install && npm run dev elsewhere).
 
-Theme preference and saved-event bookmarks are stored in the current browser, so they do not sync between devices.
+The app uses the existing users, events, registrations, attendance, and notifications tables and existing registration/admin RPCs. Apply the SQL migration in supabase/migrations before using organizer participant views: it syncs signup name, email, phone, student number, department, and organization name from Supabase Auth into public.users, backfills existing profiles, and grants organizers scoped reads of profiles registered for their events. Student signups receive the database default STUDENT role. Organiser signups use register-organizer, a server-side function that verifies the signed-in user and updates only that user profile; Admin is never offered publicly. The role used by the app is always read back from public.users. College, year of study, organization type, and designation remain in Supabase Auth metadata because those fields are not part of the public profile.
 
-## Built with
+Apply SQL migrations in order in the Supabase SQL Editor. `20261115000200_persist_notifications.sql` creates in-app notifications for published events, event updates/cancellations, and student registrations/cancellations. These notices are stored independently of email delivery.
 
-- React and Vite
-- React Router
-- Supabase Auth, Postgres, and Edge Functions
-- Lucide icons
-- Vitest for unit tests
-- Java for the optional ticket validator
+The light/dark appearance choice persists on this device. Saved event bookmarks are also stored per user on this device because the supplied schema has no saved-events table.
 
-## Run the web app locally
+Deploy the organizer onboarding and account removal functions with supabase functions deploy register-organizer and supabase functions deploy delete-account. Organizer activation checks the authenticated user and updates only that profile. Account removal uses the existing foreign-key behavior and will return an error if campus records prevent deletion.
 
-### Requirements
 
-- Node.js 20 or newer and npm
-- Access to a configured MEHFIL Supabase project
+## Checks
 
-### Setup
+- npm.cmd test runs unit tests for event relationships, role access, filtering, and saved-event scoping.
+- npm.cmd run build creates the production bundle.
+- supabase/tests/security_contract.sql contains read-only database contract checks for foreign keys, role RPC availability, RLS enablement, and direct self-recursive policies. Run it against Supabase with the CLI/pgTAP test runner.
 
-1. Clone this repository from GitHub and open its folder in a terminal.
-2. Install the dependencies:
+## Email delivery
 
-   ```sh
-   npm ci
-   ```
+The app invokes the event-email-notify Supabase Edge Function after confirmed registrations, cancellations, and organizer event changes. Deploy it with supabase functions deploy event-email-notify. Configure RESEND_API_KEY and EMAIL_FROM with supabase secrets set before deployment. The function verifies user ownership and keeps the Supabase service key on the server.
 
-3. Copy `.env.example` to `.env.local` and add your Supabase project URL and publishable/anon key:
+## Java ticket validator
 
-   ```text
-   VITE_SUPABASE_URL=https://your-project.supabase.co
-   VITE_SUPABASE_ANON_KEY=your-publishable-or-anon-key
-   ```
+The standalone CLI in ticket-validator/ validates confirmed registration tickets from a CSV export and prevents a second local check-in. It is an offline companion to the organizer web check-in screen, which writes attendance through the existing attendance table.
 
-4. Start the development server:
+    cd ticket-validator
+    javac TicketValidator.java
+    java TicketValidator tickets.csv <registration-uuid>
 
-   ```sh
-   npm run dev
-   ```
+CSV header: registration_id,event_id,registration_status. The offline CLI is for import/export workflows; use the authenticated web check-in to persist attendance in Supabase.
 
-Vite prints a local URL in the terminal when the app is ready. To create and preview a production build, run `npm run build` followed by `npm run preview`.
 
-Keep `.env.local` private. It is excluded by `.gitignore`; never put a Supabase service-role key in browser environment variables.
-
-## Supabase setup
-
-MEHFIL connects to an existing Supabase database. It expects the `public.users`, `public.events`, `public.registrations`, `public.attendance`, and `public.notifications` tables, plus the `register_for_event`, `cancel_registration`, and `admin_set_user_role` RPCs. This repository contains add-on migrations for that schema; it does not include the initial database schema or all of those RPC definitions. Set up those database objects and their row-level security policies before connecting a new Supabase project.
-
-Apply the migrations in `supabase/migrations` in filename order using the Supabase SQL Editor:
-
-1. `20261115000100_sync_signup_profile_data.sql` syncs and backfills signup profile fields in `public.users` and lets organizers read profiles for people registered for their events.
-2. `20261115000200_persist_notifications.sql` creates in-app notifications for published or updated events and registration confirmations or cancellations. Notifications are stored in the database and do not depend on email delivery.
-
-The app reads account roles from `public.users`. Public signup is for students and organizers; administrator access must be granted through a trusted admin process. College, year of study, organization type, and designation are stored in Supabase Auth metadata rather than the current `public.users` profile schema.
-
-### Edge Functions
-
-Organizer onboarding and account deletion use Supabase Edge Functions. After installing and configuring the [Supabase CLI](https://supabase.com/docs/guides/cli), link it to your project and deploy:
-
-```sh
-supabase login
-supabase link --project-ref YOUR_PROJECT_REF
-supabase functions deploy register-organizer
-supabase functions deploy delete-account
-```
-
-Event email delivery is optional. To enable it, deploy `event-email-notify` and configure the Resend sender and API key as Supabase secrets:
-
-```sh
-supabase functions deploy event-email-notify
-supabase secrets set RESEND_API_KEY=YOUR_RESEND_API_KEY EMAIL_FROM=notifications@example.com
-```
-
-Without email configuration, database-backed in-app notifications still work. The database migration for notifications must be applied separately as described above.
-
-## Unit tests and database checks
-
-Run the JavaScript unit tests and production build with:
-
-```sh
-npm test
-npm run build
-```
-
-`supabase/tests/security_contract.sql` contains database contract checks for expected tables, foreign keys, role-management functions, and row-level security. It requires the project schema and the Supabase CLI/pgTAP test setup.
-
-## Offline ticket validator
-
-The optional CLI in `ticket-validator/` checks a registration against a CSV export. It accepts only `CONFIRMED` registrations and records local check-ins in `checked-in.txt`; it does not write attendance to Supabase. The authenticated organizer check-in page is the web workflow that records attendance in the database.
-
-The CSV must contain these columns:
-
-```csv
-registration_id,event_id,registration_status
-```
-
-With Java 17 or newer, run the sample from the project root:
-
-```sh
-cd ticket-validator
-javac TicketValidator.java
-java TicketValidator tickets.example.csv 00000000-0000-0000-0000-000000000001
-```
-
-Replace the sample UUID with a registration UUID from your own export.

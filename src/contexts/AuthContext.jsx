@@ -1,21 +1,49 @@
-﻿import { createContext, useContext, useEffect, useState } from 'react'
+﻿import { createContext, useCallback, useContext, useEffect, useState } from 'react'
 import { supabase, supabaseReady } from '../lib/supabase'
 import { fetchProfile } from '../services/api'
 
 const AuthContext = createContext(null)
 
+async function rollNumberExists(studentNumber) {
+  try {
+    const { data, error } = await supabase.rpc('student_number_exists', {
+      p_student_number: studentNumber,
+    })
+    if (error) {
+      console.warn('Roll number lookup is unavailable; signup will rely on database validation.', error)
+      return null
+    }
+    return data === true
+  } catch (error) {
+    console.warn('Roll number lookup is unavailable; signup will rely on database validation.', error)
+    return null
+  }
+}
+
 async function resolveProfile(authUser) {
   let profile = await fetchProfile(authUser.id)
+  if (!profile) {
+    // A browser can keep a locally cached session after its Auth user is deleted.
+    // Check with Auth so a missing profile row alone does not sign out a valid user.
+    try {
+      const { error } = await supabase.auth.getUser()
+      if (error && ([400, 401, 403, 404].includes(error.status) || error.code === 'user_not_found')) {
+        return { profile: null, warning: '', sessionUserMissing: true }
+      }
+    } catch {
+      // A network failure should not be mistaken for a deleted account.
+    }
+  }
   const requestedOrganizer = authUser.user_metadata?.register_as === 'ORGANIZER'
   if (requestedOrganizer && profile?.role === 'STUDENT') {
     const { error } = await supabase.functions.invoke('register-organizer', { body: {} })
-    if (error) return { profile, warning: 'Organizer access is waiting for activation. Sign in again after onboarding is configured.' }
+    if (error) return { profile, warning: 'Organizer access is waiting for activation. Sign in again after onboarding is configured.', sessionUserMissing: false }
     profile = await fetchProfile(authUser.id)
     if (profile?.role !== 'ORGANIZER') {
-      return { profile, warning: 'Organizer access is waiting for activation. Please contact a campus administrator.' }
+      return { profile, warning: 'Organizer access is waiting for activation. Please contact a campus administrator.', sessionUserMissing: false }
     }
   }
-  return { profile, warning: '' }
+  return { profile, warning: '', sessionUserMissing: false }
 }
 
 export function AuthProvider({ children }) {
@@ -23,6 +51,7 @@ export function AuthProvider({ children }) {
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
   const [profileError, setProfileError] = useState('')
+  const [sessionUserMissing, setSessionUserMissing] = useState(false)
 
   useEffect(() => {
     if (!supabaseReady || !supabase) {
@@ -38,15 +67,18 @@ export function AuthProvider({ children }) {
         setLoading(false)
         return
       }
+      setSessionUserMissing(false)
       try {
         const result = await resolveProfile(authSession.user)
         if (alive) {
           setProfile(result.profile)
-          setProfileError(result.warning || (!result.profile ? 'Your account exists, but its MEHFIL profile is not available yet.' : ''))
+          setSessionUserMissing(Boolean(result.sessionUserMissing))
+          setProfileError(result.warning || (!result.profile && !result.sessionUserMissing ? 'Your account exists, but its MEHFIL profile is not available yet.' : ''))
         }
       } catch (error) {
         if (alive) {
           setProfile(null)
+          setSessionUserMissing(false)
           setProfileError(error.message || 'Unable to load your profile.')
         }
       } finally {
@@ -68,9 +100,11 @@ export function AuthProvider({ children }) {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password })
     if (error) throw error
     setSession(data.session)
+    setSessionUserMissing(false)
     if (data.user) {
       const result = await resolveProfile(data.user)
       setProfile(result.profile)
+      setSessionUserMissing(Boolean(result.sessionUserMissing))
       setProfileError(result.warning)
     }
     return data
@@ -79,11 +113,15 @@ export function AuthProvider({ children }) {
   const signUp = async (form) => {
     if (!supabase) throw new Error('Supabase is not configured. Add the existing project URL and publishable key to .env.local.')
     const isOrganizer = form.accountType === 'ORGANIZER'
+    const studentNumber = isOrganizer ? null : form.studentNumber.trim()
+    if (!isOrganizer && await rollNumberExists(studentNumber)) {
+      throw new Error('Roll Number already exists')
+    }
     const metadata = {
       full_name: form.fullName.trim(),
       phone_number: form.phone.trim(),
       register_as: form.accountType,
-      student_number: isOrganizer ? null : form.studentNumber.trim(),
+      student_number: studentNumber,
       department_name: isOrganizer ? null : form.department.trim(),
       college_name: isOrganizer ? null : form.collegeName.trim(),
       year_of_study: isOrganizer ? null : form.yearOfStudy,
@@ -94,9 +132,19 @@ export function AuthProvider({ children }) {
     const { data, error } = await supabase.auth.signUp({
       email: form.email.trim(),
       password: form.password,
-      options: { data: metadata },
+      options: {
+        data: metadata,
+        emailRedirectTo: `${window.location.origin}/auth/confirm`,
+      },
     })
-    if (error) throw error
+    if (error) {
+      // The Auth API can hide profile-trigger details behind a generic database
+      // error, so recheck the roll number to report a useful duplicate message.
+      if (!isOrganizer && await rollNumberExists(studentNumber)) {
+        throw new Error('Roll No already exists')
+      }
+      throw error
+    }
     let resultProfile = null
     let organizerPending = false
     if (data.session && data.user) {
@@ -105,9 +153,21 @@ export function AuthProvider({ children }) {
       organizerPending = Boolean(result.warning)
       setSession(data.session)
       setProfile(result.profile)
+      setSessionUserMissing(Boolean(result.sessionUserMissing))
       setProfileError(result.warning)
     }
     return { ...data, profile: resultProfile, organizerPending }
+  }
+
+  const resendSignupConfirmation = async (email) => {
+    if (!supabase) throw new Error('Supabase is not configured. Add the existing project URL and publishable key to .env.local.')
+    const { data, error } = await supabase.auth.resend({
+      type: 'signup',
+      email: email.trim(),
+      options: { emailRedirectTo: `${window.location.origin}/auth/confirm` },
+    })
+    if (error) throw error
+    return data
   }
 
   const signOut = async () => {
@@ -118,12 +178,28 @@ export function AuthProvider({ children }) {
     setSession(null)
     setProfile(null)
     setProfileError('')
+    setSessionUserMissing(false)
   }
+
+  const clearLocalSession = useCallback(async () => {
+    if (supabase) {
+      try { await supabase.auth.signOut({ scope: 'local' }) } catch {}
+    }
+    setSession(null)
+    setProfile(null)
+    setProfileError('')
+    // Keep the deleted-user signal until the router reaches the home page.
+  }, [])
+
+  const clearSessionUserMissing = useCallback(() => setSessionUserMissing(false), [])
 
   const deleteAccount = async () => {
     if (!supabase) throw new Error('Supabase is not configured.')
     const { data, error } = await supabase.functions.invoke('delete-account', { body: { confirm: true } })
     if (error) {
+      if (error.name === 'FunctionsFetchError') {
+        throw new Error('Could not reach the account deletion service. Confirm the delete-account Edge Function is deployed to this Supabase project, then try again.')
+      }
       let message = error.message
       try { message = (await error.context.json()).error || message } catch {}
       throw new Error(message)
@@ -132,6 +208,7 @@ export function AuthProvider({ children }) {
     setSession(null)
     setProfile(null)
     setProfileError('')
+    setSessionUserMissing(false)
     return data
   }
 
@@ -139,14 +216,16 @@ export function AuthProvider({ children }) {
     if (!session?.user?.id) return null
     const result = await resolveProfile(session.user)
     setProfile(result.profile)
+    setSessionUserMissing(Boolean(result.sessionUserMissing))
     setProfileError(result.warning)
     return result.profile
   }
 
   return (
     <AuthContext.Provider value={{
-      session, user: session?.user || null, profile, loading, profileError,
-      configured: supabaseReady, signIn, signUp, signOut, deleteAccount, refreshProfile,
+      session, user: session?.user || null, profile, loading, profileError, sessionUserMissing,
+      configured: supabaseReady, signIn, signUp, resendSignupConfirmation, signOut, deleteAccount, refreshProfile,
+      clearLocalSession, clearSessionUserMissing,
     }}>
       {children}
     </AuthContext.Provider>

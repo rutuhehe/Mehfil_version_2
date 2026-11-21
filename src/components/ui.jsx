@@ -41,7 +41,7 @@ function navFor(role) {
   if (role === 'ADMIN') return [
     ['Overview', '/admin'], ['Users', '/admin/users'], ['Events', '/admin/events'], ['Registrations', '/admin/registrations'], ['Attendance', '/admin/attendance'], ['Notifications', '/notifications'], ['Profile', '/profile'],
   ]
-  return [['Home', '/'], ['Explore events', '/events'], ['About', '/#about'], ['Contact', '/contact']]
+  return [['Home', '/'], ['Explore events', '/events'], ['About', '/about'], ['Contact', '/contact']]
 }
 
 export function Navbar() {
@@ -132,8 +132,8 @@ export function Loading({ label = 'Loading your MEHFIL…' }) {
 export function ErrorState({ message, retry }) {
   return <div className="error-state"><strong>Something needs attention</strong><p>{message}</p>{retry && <Button variant="outline" onClick={retry}>Try again</Button>}</div>
 }
-export function Field({ label, error, children, hint }) {
-  return <label className="form-field"><span>{label}</span>{children}{hint && <small>{hint}</small>}{error && <small className="field-error">{error}</small>}</label>
+export function Field({ label, error, children, hint, hintClassName }) {
+  return <label className="form-field"><span>{label}</span>{children}{hint && <small className={hintClassName}>{hint}</small>}{error && <small className="field-error">{error}</small>}</label>
 }
 export function PageTitle({ eyebrow, title, description, action }) {
   return <div className="page-title"><div>{eyebrow && <span className="eyebrow">{eyebrow}</span>}<h1>{title}</h1>{description && <p>{description}</p>}</div>{action}</div>

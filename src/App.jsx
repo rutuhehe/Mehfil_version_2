@@ -1,9 +1,10 @@
-﻿import { Link, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom'
+﻿import { useEffect } from 'react'
+import { Link, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { ThemeProvider } from './contexts/ThemeContext'
 import { Footer, Loading, Navbar, PageFrame, ToastProvider } from './components/ui'
 import {
-  AboutPage, ContactPage, EventDetailsPage, ExplorePage, ForgotPasswordPage, HomePage, LoginPage, RegisterPage, ResetPasswordPage,
+  AboutPage, AuthConfirmPage, ContactPage, EventDetailsPage, ExplorePage, ForgotPasswordPage, HomePage, LoginPage, RegisterPage, ResetPasswordPage,
 } from './pages/PublicPages'
 import {
   AdminAttendancePage, AdminDashboard, AdminEventsPage, AdminRegistrationsPage, AdminUsersPage,
@@ -16,13 +17,17 @@ import {
 import { canAccessRole, dashboardForRole } from './utils/events'
 
 function ProtectedLayout() {
-  const { user, loading, profile, profileError } = useAuth()
+  const { user, loading, profile, profileError, sessionUserMissing, clearLocalSession } = useAuth()
   const location = useLocation()
+  useEffect(() => {
+    if (!loading && sessionUserMissing) void clearLocalSession()
+  }, [loading, sessionUserMissing, clearLocalSession])
   if (loading) return <div className="app-loading"><Loading label="Getting your campus ready…" /></div>
+  if (sessionUserMissing) return <Navigate to="/" replace />
   if (!user) return <Navigate to={'/login?next=' + encodeURIComponent(location.pathname)} replace />
   if (!profile) return <><Navbar /><main className="container page-pad"><div className="profile-missing"><h1>Your account is signed in</h1><p>{profileError || 'We could not find a MEHFIL profile for this account. Ask a campus administrator to check your access.'}</p><p>Public signups become student accounts after the project’s profile trigger runs.</p></div></main><Footer /></>
   if (profile.is_active === false) return <><Navbar /><main className="container page-pad"><div className="profile-missing"><h1>This account is inactive</h1><p>Contact a campus administrator to restore access to MEHFIL.</p></div></main><Footer /></>
-  return <><Navbar />{profileError && <div className="profile-warning-banner"><span>{profileError}</span><Link to="/profile">View profile</Link></div>}<Outlet /><Footer /></>
+  return <><Navbar />{profileError && location.pathname !== '/profile' && <div className="profile-warning-banner"><span>{profileError}</span><Link to="/profile">View profile</Link></div>}<Outlet /><Footer /></>
 }
 
 function RoleGate({ roles }) {
@@ -32,7 +37,11 @@ function RoleGate({ roles }) {
 }
 
 function AppRoutes() {
-  const { profile } = useAuth()
+  const { profile, sessionUserMissing, clearSessionUserMissing } = useAuth()
+  const location = useLocation()
+  useEffect(() => {
+    if (location.pathname === '/' && sessionUserMissing) clearSessionUserMissing()
+  }, [location.pathname, sessionUserMissing, clearSessionUserMissing])
   return <Routes>
     <Route path="/" element={<HomePage />} />
     <Route path="/events" element={<ExplorePage />} />
@@ -43,6 +52,7 @@ function AppRoutes() {
     <Route path="/register" element={<RegisterPage />} />
     <Route path="/forgot-password" element={<ForgotPasswordPage />} />
     <Route path="/reset-password" element={<ResetPasswordPage />} />
+    <Route path="/auth/confirm" element={<AuthConfirmPage />} />
     <Route path="/app" element={<Navigate to={dashboardForRole(profile?.role)} replace />} />
     <Route element={<ProtectedLayout />}>
       <Route path="/profile" element={<ProfilePage />} />
@@ -64,6 +74,8 @@ function AppRoutes() {
         <Route path="/admin" element={<AdminDashboard />} />
         <Route path="/admin/users" element={<AdminUsersPage />} />
         <Route path="/admin/events" element={<AdminEventsPage />} />
+        <Route path="/admin/events/new" element={<OrganizerEventFormPage />} />
+        <Route path="/admin/events/:eventId/edit" element={<OrganizerEventFormPage />} />
         <Route path="/admin/registrations" element={<AdminRegistrationsPage />} />
         <Route path="/admin/attendance" element={<AdminAttendancePage />} />
       </Route>
