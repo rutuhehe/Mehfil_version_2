@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from 'react'
+﻿import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   ArrowDownRight, ArrowRight, ArrowUpRight, BookOpen, CalendarDays, Check, ChevronDown,
@@ -424,23 +424,54 @@ export function ForgotPasswordPage() {
 export function AuthConfirmPage() {
   const { user, profile, loading, configured } = useAuth()
   const [params] = useSearchParams()
+  const tokenHash = params.get('token_hash')
+  const tokenType = params.get('type')
   const callbackError = params.get('error') || params.get('error_code') || params.get('error_description')
+  const verificationStarted = useRef(false)
+  const [verificationState, setVerificationState] = useState(() => tokenHash ? 'checking' : 'idle')
   const emailConfirmed = Boolean(user?.email_confirmed_at || user?.confirmed_at)
+
+  useEffect(() => {
+    if (!configured || !tokenHash || verificationStarted.current) return
+    verificationStarted.current = true
+
+    const clearTokenFromAddress = () => {
+      window.history.replaceState(window.history.state, '', window.location.pathname)
+    }
+    if (callbackError || !['email', 'signup'].includes(tokenType)) {
+      setVerificationState('error')
+      clearTokenFromAddress()
+      return
+    }
+
+    supabase.auth.verifyOtp({ token_hash: tokenHash, type: tokenType })
+      .then(({ data, error }) => {
+        if (error) throw error
+        if (!data.user) throw new Error('The confirmation link did not return an account.')
+        setVerificationState('confirmed')
+        // Confirmation hashes are one-time credentials; keep them out of browser history.
+        clearTokenFromAddress()
+      })
+      .catch(() => {
+        setVerificationState('error')
+        clearTokenFromAddress()
+      })
+  }, [configured, tokenHash, tokenType, callbackError])
 
   if (!configured) {
     return <AuthFrame title="Email confirmation unavailable." subtitle="Connect the Supabase project before confirming an account."><p className="notice-box">Supabase is not configured for this app.</p><p className="auth-switch"><Link to="/login">Back to log in</Link></p></AuthFrame>
   }
-  if (loading) {
+  if (loading || verificationState === 'checking') {
     return <AuthFrame title="Confirming your email…" subtitle="We’re checking the confirmation link."><p className="auth-subtitle" role="status">This should only take a moment.</p></AuthFrame>
   }
-  if (callbackError || !emailConfirmed) {
+  const confirmed = verificationState === 'confirmed' || (!tokenHash && emailConfirmed)
+  if (callbackError || verificationState === 'error' || !confirmed) {
     return <AuthFrame title="We couldn’t confirm this link." subtitle="The link may have expired or already been used."><p className="form-error" role="alert">Request a new confirmation email, then open the newest link.</p><p className="auth-switch"><Link to="/register">Back to registration</Link> · <Link to="/login">Log in</Link></p></AuthFrame>
   }
 
   const destination = profile ? dashboardForRole(profile.role) : '/login'
   return <AuthFrame title="Email confirmed." subtitle="Your MEHFIL account is ready."><p className="form-success" role="status">Your email address has been verified successfully.</p><Link className="button button-primary full-width" to={destination}>{profile ? 'Continue to MEHFIL' : 'Go to log in'} <ArrowRight size={17} /></Link></AuthFrame>
 }
-
 
 
 export function ResetPasswordPage() {
