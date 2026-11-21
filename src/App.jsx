@@ -31,7 +31,12 @@ function ProtectedLayout() {
 }
 
 function RoleGate({ roles }) {
-  const { profile } = useAuth()
+  const { profile, user } = useAuth()
+  const organizerRequestPending = profile?.role === 'STUDENT'
+    && user?.user_metadata?.register_as === 'ORGANIZER'
+    && profile?.organizer_request_status !== 'REJECTED'
+    && profile?.organizer_request_status !== 'APPROVED'
+  if (organizerRequestPending) return <Navigate to="/profile" replace />
   if (!canAccessRole(profile, roles)) return <Navigate to={dashboardForRole(profile?.role)} replace />
   return <Outlet />
 }

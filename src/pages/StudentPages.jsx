@@ -10,7 +10,7 @@ import { useRequest, Workspace, EventRows } from './WorkspaceShared'
 import { getSavedEvents } from '../utils/savedEvents'
 import { formatDate, formatTime, friendlyError, isAlphabeticText, sanitizeAlphabeticText } from '../utils/format'
 import { sanitizePhoneNumber } from '../utils/format'
-import { parsePhoneNumberFromString } from 'libphonenumber-js/max'
+import { parsePhoneNumber, PhoneNumberType, phoneUtil } from '../utils/phone'
 
 export function StudentDashboard() {
   const { user, profile } = useAuth()
@@ -89,6 +89,11 @@ export function ProfilePage() {
   const editableFields = organizerAccount
     ? ['full_name', 'phone_number', 'organization_name', 'organization_type', 'designation']
     : ['full_name', 'phone_number', 'department_name', 'college_name', 'year_of_study']
+  const requiredFields = organizerAccount
+    ? [['full_name', 'Full name'], ['organization_name', 'Organization Name'], ['organization_type', 'Organization Type'], ['designation', 'Designation']]
+    : [['full_name', 'Full name'], ['department_name', 'Department'], ['college_name', 'College'], ['year_of_study', 'Year of Study']]
+  const missingRequiredField = requiredFields.find(([key]) => !(form[key] || '').trim())
+  const requiredError = missingRequiredField ? missingRequiredField[1] + ' is required.' : ''
   const alphabeticFields = organizerAccount
     ? [['full_name', 'Full name'], ['organization_name', 'Organization Name'], ['organization_type', 'Organization Type'], ['designation', 'Designation']]
     : [['full_name', 'Full name'], ['department_name', 'Department'], ['college_name', 'College']]
@@ -96,10 +101,15 @@ export function ProfilePage() {
   const alphabeticError = invalidAlphabeticField
     ? invalidAlphabeticField[1] + ' can contain letters and spaces only.'
     : ''
-  const parsedPhone = form.phone_number ? parsePhoneNumberFromString(form.phone_number) : null
-  const phoneError = form.phone_number && !parsedPhone?.isValid()
-    ? 'Enter a valid phone number with its country code, such as +91 7045311328.'
-    : ''
+  const parsedPhone = form.phone_number ? parsePhoneNumber(form.phone_number) : null
+  const phoneType = parsedPhone ? phoneUtil.getNumberType(parsedPhone) : null
+  const phoneError = !(form.phone_number || '').trim()
+    ? 'Phone number is required.'
+    : !parsedPhone || !phoneUtil.isValidNumber(parsedPhone)
+      ? 'Enter a valid phone number with its country code, such as +91 7045311328.'
+      : ![PhoneNumberType.MOBILE, PhoneNumberType.FIXED_LINE_OR_MOBILE].includes(phoneType)
+        ? 'Enter a mobile number. Landline and service numbers are not accepted.'
+        : ''
   const hasChanges = editableFields.some((key) => (form[key] ?? '') !== (savedForm[key] ?? ''))
 
   useEffect(() => {
@@ -118,6 +128,10 @@ export function ProfilePage() {
   const submit = async (event) => {
     event.preventDefault()
     if (!hasChanges || busy) return
+    if (requiredError) {
+      setError(requiredError)
+      return
+    }
     if (invalidAlphabeticField) {
       setError(alphabeticError)
       return
@@ -164,25 +178,27 @@ export function ProfilePage() {
   }
 
   return <Workspace><PageTitle eyebrow="YOUR ACCOUNT" title="Your profile" description="Keep your campus details up to date." />
-    {organizerAccount && profile?.role !== 'ORGANIZER' && <div className="notice-box profile-notice">Your organizer request has been received. Organizer features will be available once your account is activated.</div>}
+    {organizerAccount && profile?.role !== 'ORGANIZER' && <div className="notice-box profile-notice">{profile?.organizer_request_status === 'REJECTED'
+      ? 'Your organizer access request was not approved. Your account remains a student account. Contact a campus administrator if you need more information.'
+      : 'Your organizer request is awaiting review by a campus administrator. Your account remains a student account until it is approved, so organizer tools are not available yet.'}</div>}
     <div className="profile-layout"><aside className="profile-card"><div className="profile-avatar">{(profile?.full_name || 'M').slice(0, 1).toUpperCase()}</div><h2>{profile?.full_name || 'MEHFIL member'}</h2><p>{profile?.email}</p><StatusBadge value={profile?.role} /><dl><dt>Account status</dt><dd>{profile?.is_active ? 'Active' : 'Inactive'}</dd><dt>Member since</dt><dd>{formatDate(profile?.created_at)}</dd></dl></aside>
       <div className="profile-main-column">
         <form className="form-card" onSubmit={submit}><h2>Personal details</h2><p>Your role and account access are controlled by the database.</p>
           <Field label="Full name"><input required autoComplete="name" placeholder="Your full name" value={form.full_name || ''} onChange={updateProfileField('full_name', true)} /></Field>
-          <div className="form-two"><Field label="Email address"><input value={profile?.email || ''} disabled /></Field><Field label="Phone number"><input type="tel" inputMode="tel" autoComplete="tel" placeholder="+91 7045311328" value={form.phone_number || ''} onChange={updateProfileField('phone_number')} /></Field></div>
+          <div className="form-two"><Field label="Email address"><input value={profile?.email || ''} disabled /></Field><Field label="Phone number"><input type="tel" required inputMode="tel" autoComplete="tel" placeholder="+91 7045311328" value={form.phone_number || ''} onChange={updateProfileField('phone_number')} /></Field></div>
           <Field label="Role"><input value={profile?.role || ''} disabled /></Field>
           {organizerAccount ? <>
             <span className="form-section-tag">Organiser details</span>
             <Field label="Organization Name"><input required value={form.organization_name || ''} onChange={updateProfileField('organization_name', true)} /></Field>
-            <Field label="Organization Type"><input placeholder="College Club, Student Council, Department, External Organization" value={form.organization_type || ''} onChange={updateProfileField('organization_type', true)} /></Field>
-            <Field label="Designation"><input placeholder="President, Secretary, Coordinator, Faculty, etc." value={form.designation || ''} onChange={updateProfileField('designation', true)} /></Field>
+            <Field label="Organization Type"><input required placeholder="College Club, Student Council, Department, External Organization" value={form.organization_type || ''} onChange={updateProfileField('organization_type', true)} /></Field>
+            <Field label="Designation"><input required placeholder="President, Secretary, Coordinator, Faculty, etc." value={form.designation || ''} onChange={updateProfileField('designation', true)} /></Field>
           </> : <>
             <span className="form-section-tag">Student details</span>
-            <div className="form-two"><Field label="Roll Number"><input value={profile?.student_number || ''} disabled /></Field><Field label="Department"><input value={form.department_name || ''} onChange={updateProfileField('department_name', true)} /></Field></div>
-            <div className="form-two"><Field label="College"><input placeholder="Institution name" value={form.college_name || ''} onChange={updateProfileField('college_name', true)} /></Field><Field label="Year of Study"><input placeholder="First, Second, Third, Fourth year" value={form.year_of_study || ''} onChange={(e) => setForm({ ...form, year_of_study: e.target.value })} /></Field></div>
+            <div className="form-two"><Field label="Roll Number"><input value={profile?.student_number || ''} disabled /></Field><Field label="Department"><input required value={form.department_name || ''} onChange={updateProfileField('department_name', true)} /></Field></div>
+            <div className="form-two"><Field label="College"><input required placeholder="Institution name" value={form.college_name || ''} onChange={updateProfileField('college_name', true)} /></Field><Field label="Year of Study"><input required placeholder="First, Second, Third, Fourth year" value={form.year_of_study || ''} onChange={updateProfileField('year_of_study')} /></Field></div>
           </>}
-          {(error || alphabeticError || phoneError) && <p className="form-error" role="alert">{error || alphabeticError || phoneError}</p>}{message && <p className="form-success" role="status">{message}</p>}
-          <Button disabled={busy || !hasChanges || Boolean(invalidAlphabeticField) || Boolean(phoneError)}>{busy ? 'Saving…' : 'Save changes'} <Check size={16} /></Button>
+          {(error || requiredError || alphabeticError || phoneError) && <p className="form-error" role="alert">{error || requiredError || alphabeticError || phoneError}</p>}{message && <p className="form-success" role="status">{message}</p>}
+          <Button disabled={busy || !hasChanges || Boolean(requiredError) || Boolean(invalidAlphabeticField) || Boolean(phoneError)}>{busy ? 'Saving…' : 'Save changes'} <Check size={16} /></Button>
         </form>
         <section className="form-card account-actions-card"><div><span className="eyebrow">PREFERENCES</span><h2>Appearance</h2><p>Choose the look that feels right for you.</p></div><div className="theme-preference"><span>{theme === 'dark' ? 'Dark theme' : 'Light theme'}</span><Button variant="outline" onClick={toggleTheme}>Switch to {theme === 'dark' ? 'light' : 'dark'} {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}</Button></div>
           <div className="account-action-row"><div><strong>Log out</strong><span>Sign out of MEHFIL on this device.</span></div><Button variant="outline" onClick={logout}>Log out</Button></div>
@@ -194,12 +210,19 @@ export function ProfilePage() {
   </Workspace>
 }
 export function NotificationsPage() {
-  const { user } = useAuth()
+  const { user, profile } = useAuth()
+  const navigate = useNavigate()
   const notify = useToast()
   const data = useRequest(() => fetchNotifications(user.id), [user?.id])
-  const markOne = async (item) => { try { await setNotificationRead(item.notification_id, !item.is_read); await data.refresh() } catch (error) { notify(friendlyError(error), 'error') } }
+  const markOne = async (item) => {
+    try {
+      await setNotificationRead(item.notification_id, !item.is_read)
+      await data.refresh()
+      if (profile?.role === 'ADMIN' && item.notification_type === 'organizer_request') navigate('/admin/users')
+    } catch (error) { notify(friendlyError(error), 'error') }
+  }
   const markAll = async () => { try { await setAllNotificationsRead(user.id); await data.refresh(); notify('All notifications marked as read.') } catch (error) { notify(friendlyError(error), 'error') } }
-  return <Workspace><PageTitle eyebrow="A NOTE FROM CAMPUS" title="Notifications" description="Event updates and registration notes, all in one place." action={data.data?.some((item) => !item.is_read) && <Button variant="outline" onClick={markAll}>Mark all read <Check size={15} /></Button>} />
+  return <Workspace><PageTitle eyebrow="A NOTE FROM CAMPUS" title="Notifications" description={profile?.role === 'ADMIN' ? 'Event updates, registration notes, and access requests that need review.' : 'Event updates and registration notes, all in one place.'} action={data.data?.some((item) => !item.is_read) && <Button variant="outline" onClick={markAll}>Mark all read <Check size={15} /></Button>} />
     {data.loading ? <Loading /> : data.error ? <ErrorState message={friendlyError(data.error)} retry={data.refresh} /> : data.data?.length ? <div className="notification-list">{data.data.map((item) => <button className={'notification-row' + (!item.is_read ? ' notification-unread' : '')} key={item.notification_id} onClick={() => markOne(item)}><span className="notification-icon"><CalendarDays size={18} /></span><span className="notification-content"><strong>{item.title}</strong><p>{item.message}</p><small>{formatDate(item.created_at)} · {formatTime(item.created_at)} · {item.notification_type}</small></span>{!item.is_read && <span className="unread-dot"></span>}</button>)}</div> : <EmptyState icon={Check} title="All caught up" description="You’ll find registration confirmations and event updates here." />}
   </Workspace>
 }

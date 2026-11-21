@@ -177,6 +177,13 @@ export async function setUserRole(userId, role) {
   return unwrap(await client().rpc('admin_set_user_role', { p_user_id: userId, p_role: role }))
 }
 
+export async function reviewOrganizerRequest(userId, approved) {
+  return unwrap(await client().rpc('admin_review_organizer_request', {
+    p_user_id: userId,
+    p_approved: approved,
+  }))
+}
+
 export async function setUserActive(userId, isActive) {
   return unwrap(await client().rpc('admin_set_user_active', {
     p_user_id: userId,

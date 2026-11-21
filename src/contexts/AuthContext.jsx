@@ -34,15 +34,6 @@ async function resolveProfile(authUser) {
       // A network failure should not be mistaken for a deleted account.
     }
   }
-  const requestedOrganizer = authUser.user_metadata?.register_as === 'ORGANIZER'
-  if (requestedOrganizer && profile?.role === 'STUDENT') {
-    const { error } = await supabase.functions.invoke('register-organizer', { body: {} })
-    if (error) return { profile, warning: 'Organizer access is waiting for activation. Sign in again after onboarding is configured.', sessionUserMissing: false }
-    profile = await fetchProfile(authUser.id)
-    if (profile?.role !== 'ORGANIZER') {
-      return { profile, warning: 'Organizer access is waiting for activation. Please contact a campus administrator.', sessionUserMissing: false }
-    }
-  }
   return { profile, warning: '', sessionUserMissing: false }
 }
 
@@ -150,7 +141,9 @@ export function AuthProvider({ children }) {
     if (data.session && data.user) {
       const result = await resolveProfile(data.user)
       resultProfile = result.profile
-      organizerPending = Boolean(result.warning)
+      organizerPending = Boolean(isOrganizer
+        && result.profile?.role !== 'ORGANIZER'
+        && result.profile?.organizer_request_status !== 'REJECTED')
       setSession(data.session)
       setProfile(result.profile)
       setSessionUserMissing(Boolean(result.sessionUserMissing))

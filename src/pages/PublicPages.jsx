@@ -12,7 +12,7 @@ import { dashboardForRole, filterEvents, isAvailableEvent } from '../utils/event
 import { supabase } from '../lib/supabase'
 import { formatDate, formatTime, friendlyError, sanitizeAlphabeticText } from '../utils/format'
 import mehfilLogo from '../assets/mehfil-logo.jpeg'
-import { getCountries, getCountryCallingCode, parsePhoneNumberFromString } from 'libphonenumber-js/max'
+import { PhoneNumberFormat, PhoneNumberType, phoneUtil, parsePhoneNumber } from '../utils/phone'
 
 const EMAIL_DOMAIN_PATTERN = /^[^\s@]+@[a-z\d](?:[a-z\d-]*[a-z\d])?(?:\.[a-z\d](?:[a-z\d-]*[a-z\d])?)*\.[a-z]{2,}$/i
 const hasSpecialCharacter = (value) => /[\p{P}\p{S}]/u.test(value)
@@ -29,13 +29,44 @@ const getPasswordHint = (value) => {
 }
 const isPasswordCompliant = (value) => value.length >= 8 && /[a-z]/.test(value) && /[A-Z]/.test(value) && /\d/.test(value) && hasSpecialCharacter(value)
 const COUNTRY_NAMES = new Intl.DisplayNames(['en'], { type: 'region' })
-const PHONE_COUNTRIES = getCountries()
+const PHONE_REGION_CODES = new Set(phoneUtil.getSupportedRegions())
+const PHONE_COUNTRIES = Array.from(PHONE_REGION_CODES)
   .map((code) => ({
     code,
     name: COUNTRY_NAMES.of(code) || code,
-    callingCode: getCountryCallingCode(code),
+    callingCode: phoneUtil.getCountryCodeForRegion(code),
   }))
   .sort((first, second) => first.name.localeCompare(second.name))
+
+function resolveRegistrationPhone(value, country) {
+  const input = value.trim()
+  if (!input) return { error: 'Enter a mobile phone number.' }
+
+  const international = input.startsWith('+')
+  if (!international && !country) {
+    return { error: 'Choose your country, or enter the number with + and its country code.' }
+  }
+
+  const phoneNumber = parsePhoneNumber(input, international ? 'ZZ' : country)
+  const detectedCountry = phoneNumber && phoneUtil.getRegionCodeForNumber(phoneNumber)
+  if (!phoneNumber || !phoneUtil.isValidNumber(phoneNumber) || !PHONE_REGION_CODES.has(detectedCountry)) {
+    return { error: 'Enter a valid phone number in national format or with + and its country code.' }
+  }
+  if (!international && !phoneUtil.isValidNumberForRegion(phoneNumber, country)) {
+    return { error: 'This number does not match the selected country.' }
+  }
+
+  const numberType = phoneUtil.getNumberType(phoneNumber)
+  if (![PhoneNumberType.MOBILE, PhoneNumberType.FIXED_LINE_OR_MOBILE].includes(numberType)) {
+    return { error: 'Enter a mobile number. Landline and service numbers are not accepted.' }
+  }
+
+  return {
+    phoneNumber,
+    country: detectedCountry,
+    e164: phoneUtil.format(phoneNumber, PhoneNumberFormat.E164),
+  }
+}
 
 export function HomePage() {
   const [events, setEvents] = useState([])
@@ -300,6 +331,7 @@ export function RegisterPage() {
   const navigate = useNavigate()
   const [accountType, setAccountType] = useState('STUDENT')
   const [phoneCountry, setPhoneCountry] = useState('')
+  const [phoneError, setPhoneError] = useState('')
   const [show, setShow] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -317,11 +349,24 @@ export function RegisterPage() {
   const update = (name, lettersOnly = false) => (event) => {
     const value = name === 'studentNumber'
       ? event.target.value.replace(/[^\p{L}\p{N}]/gu, '')
-      : name === 'phone' ? event.target.value.replace(/\D/g, '')
+      : name === 'phone' ? event.target.value.replace(/[^\d+]/g, '').replace(/(?!^)\+/g, '')
         : lettersOnly ? sanitizeAlphabeticText(event.target.value) : event.target.value
+    if (name === 'phone') {
+      setPhoneError('')
+      if (value.startsWith('+')) {
+        const internationalNumber = parsePhoneNumber(value, 'ZZ')
+        if (internationalNumber) {
+          const detectedRegion = phoneUtil.getRegionCodeForNumber(internationalNumber)
+          if (PHONE_REGION_CODES.has(detectedRegion)) setPhoneCountry(detectedRegion)
+        }
+      }
+    }
     setForm((current) => ({ ...current, [name]: value }))
   }
-  const organizerPending = user && profile?.role === 'STUDENT' && user.user_metadata?.register_as === 'ORGANIZER'
+  const organizerPending = user && profile?.role === 'STUDENT'
+    && user.user_metadata?.register_as === 'ORGANIZER'
+    && profile?.organizer_request_status !== 'REJECTED'
+    && profile?.organizer_request_status !== 'APPROVED'
   if (user && profile && !organizerPending) return <Navigate to={dashboardForRole(profile.role)} replace />
 
   const submit = async (event) => {
@@ -331,26 +376,25 @@ export function RegisterPage() {
     if (accountType === 'STUDENT' && !/^[\p{L}\p{N}]+$/u.test(form.studentNumber)) {
       return setError('Roll Number can contain letters and numbers only.')
     }
-    if (!phoneCountry) return setError('Select your country calling code.')
-    const phoneNumber = parsePhoneNumberFromString(form.phone.trim(), {
-      defaultCountry: phoneCountry,
-      extract: false,
-    })
-    if (!phoneNumber?.isValid() || phoneNumber.country !== phoneCountry) {
-      return setError('Enter a valid phone number for the selected country code.')
+    const phoneValidation = resolveRegistrationPhone(form.phone, phoneCountry)
+    if (phoneValidation.error) {
+      setPhoneError(phoneValidation.error)
+      return
     }
+    setPhoneError('')
+    setPhoneCountry(phoneValidation.country)
     if (!EMAIL_DOMAIN_PATTERN.test(form.email.trim())) return setError('Enter a valid email address with a domain, such as name@example.com.')
     if (!isPasswordCompliant(form.password)) return
     if (form.password !== form.confirm) return setError('Your passwords do not match.')
     setBusy(true)
     try {
-      const result = await signUp({ ...form, phone: phoneNumber.number, accountType })
+      const result = await signUp({ ...form, phone: phoneValidation.e164, accountType })
       if (result.session && accountType === 'STUDENT') {
         navigate('/student', { replace: true })
       } else if (result.session && result.profile?.role === 'ORGANIZER') {
         navigate('/organizer', { replace: true })
       } else if (result.session && result.organizerPending) {
-        setSuccess('Your account is signed in. Organizer access is waiting for the secure onboarding function to activate.')
+        setSuccess('Your account is signed in. Your organizer request is awaiting review by a campus administrator. Organizer tools will be available after approval.')
       } else if (result.user && !result.session) {
         setConfirmationPending(true)
         setConfirmationEmail(form.email.trim())
@@ -371,7 +415,7 @@ export function RegisterPage() {
 
   return <AuthFrame title="Create Account" subtitle="Join the platform and get started." aside>
     {!configured && <div className="notice-box">Connect the Supabase project in .env.local before creating an account.</div>}
-    {organizerPending ? <div className="pending-organizer"><span className="eyebrow">ORGANIZER SETUP</span><h2>One last step.</h2><p>{success || 'Your database profile still shows student access. Organizer onboarding will retry when you sign in after the function is deployed.'}</p><Button variant="outline" onClick={async () => { await signOut(); navigate('/login') }}>Log out and return to login</Button></div> :
+    {organizerPending ? <div className="pending-organizer"><span className="eyebrow">ORGANIZER REQUEST</span><h2>Awaiting admin review.</h2><p>{success || 'Your request is awaiting review by a campus administrator. Your account remains a student account until it is approved.'}</p><Button variant="outline" onClick={async () => { await signOut(); navigate('/login') }}>Log out and return to login</Button></div> :
     <form onSubmit={submit} className="auth-form register-form">
       <fieldset className="account-type-field"><legend>Register as</legend><div className="account-type-switch" role="radiogroup" aria-label="Register as">
         <button type="button" role="radio" aria-checked={accountType === 'STUDENT'} className={accountType === 'STUDENT' ? 'account-type-active' : ''} onClick={() => setAccountType('STUDENT')}>Student</button>
@@ -390,11 +434,23 @@ export function RegisterPage() {
         <Field label="Designation"><input required placeholder="President, Secretary, Coordinator, Faculty, etc." value={form.designation} onChange={update('designation', true)} /></Field>
       </div>}
 
-      <Field label="Phone number" hint="Choose a country and enter the number in its national format."><div className="phone-input-group"><select required aria-label="Country calling code" value={phoneCountry} onChange={(event) => setPhoneCountry(event.target.value)}><option value="" disabled>Select country code</option>{PHONE_COUNTRIES.map((country) => <option key={country.code} value={country.code}>{country.name} (+{country.callingCode})</option>)}</select><input type="tel" required autoComplete="tel-national" inputMode="tel" placeholder="Local number" value={form.phone} onChange={update('phone')} /></div></Field>
+      <Field label="Mobile phone number" error={phoneError} hint="Choose your country for a local number, or enter + and the country code to detect it automatically.">
+        <div className="phone-input-group">
+          <select aria-label="Country or calling code" value={phoneCountry} onChange={(event) => { setPhoneCountry(event.target.value); setPhoneError('') }}>
+            <option value="">Select country</option>
+            {PHONE_COUNTRIES.map((country) => <option key={country.code} value={country.code}>{country.name} (+{country.callingCode})</option>)}
+          </select>
+          <input type="tel" required autoComplete="tel" inputMode="tel" placeholder="Mobile number" value={form.phone} onChange={update('phone')} onBlur={() => {
+            const result = resolveRegistrationPhone(form.phone, phoneCountry)
+            setPhoneError(result.error || '')
+            if (result.country) setPhoneCountry(result.country)
+          }} />
+        </div>
+      </Field>
       <Field label="Email address"><input type="email" required autoComplete="email" maxLength={254} pattern="[^@ ]+@[^@ ]+[.][^@ .]{2,}" title="Enter an email address with a domain, such as name@example.com." placeholder="example@email.com" value={form.email} onChange={update('email')} /></Field>
       <Field label="Password" hint={getPasswordHint(form.password)} hintClassName={form.password && !isPasswordCompliant(form.password) ? 'field-error' : undefined}><span className="password-field"><input type={show ? 'text' : 'password'} required minLength={8} autoComplete="new-password" placeholder="Choose a password" value={form.password} onChange={update('password')} /><button type="button" onClick={() => setShow(!show)}>{show ? 'Hide' : 'Show'}</button></span></Field>
       <Field label="Confirm password"><input type={show ? 'text' : 'password'} required autoComplete="new-password" placeholder="Re-enter your password" value={form.confirm} onChange={update('confirm')} /></Field>
-      {accountType === 'ORGANIZER' && <p className="form-help">Organizer access is written by the authenticated onboarding function. Admin access is never offered here.</p>}
+      {accountType === 'ORGANIZER' && <p className="form-help">Organizer requests are reviewed by a campus administrator. Your account remains a student account until the request is approved.</p>}
       {error && <p className="form-error" role="alert">{error}</p>}{success && <p className="form-success" role="status">{success}</p>}
       {confirmationPending && <div className="notice-box confirmation-pending"><Button type="button" variant="outline" disabled={resendBusy} onClick={resendConfirmation}>{resendBusy ? 'Requesting link…' : 'Resend confirmation email'} <ArrowRight size={15} /></Button>{resendError && <p className="form-error" role="alert">{resendError}</p>}{resendMessage && <p className="form-success" role="status">{resendMessage}</p>}</div>}
       <Button className="full-width" disabled={busy}>{busy ? 'Creating account…' : 'Create account'} <ArrowRight size={17} /></Button>

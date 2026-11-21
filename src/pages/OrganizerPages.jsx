@@ -6,19 +6,17 @@ import { useAuth } from '../contexts/AuthContext'
 import { adminCreateEvent, adminUpdateEvent, fetchEvents, fetchParticipants, fetchRegistrations, markAttendance, saveEvent, sendEventEmail, updateEvent } from '../services/api'
 import { useRequest, Workspace, EventRows, DataTable } from './WorkspaceShared'
 import { groupRegistrationsByEvent } from '../utils/events'
-import { formatDate, formatTime, friendlyError } from '../utils/format'
+import { dateTimeInZoneFromLocal, dateTimeLocalForZone, dateTimeLocalToISOString, formatDate, formatTime, friendlyError } from '../utils/format'
 
 function eventToInput(value) {
-  if (!value) return ''
-  const date = new Date(value)
-  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16)
+  return dateTimeLocalForZone(value)
 }
 function eventPayload(form) {
   return {
     title: form.title.trim(), description: form.description.trim(), category_name: form.category_name.trim(),
     department_name: form.department_name.trim(), venue: form.venue.trim(),
-    start_at: new Date(form.start_at).toISOString(), end_at: new Date(form.end_at).toISOString(),
-    registration_deadline: form.registration_deadline ? new Date(form.registration_deadline).toISOString() : null,
+    start_at: dateTimeLocalToISOString(form.start_at), end_at: dateTimeLocalToISOString(form.end_at),
+    registration_deadline: form.registration_deadline ? dateTimeLocalToISOString(form.registration_deadline) : null,
     capacity: form.capacity ? Number(form.capacity) : null,
   }
 }
@@ -99,7 +97,8 @@ export function OrganizerEventFormPage() {
   }
   const submit = async (event) => {
     event.preventDefault(); setError('')
-    const start = new Date(form.start_at); const end = new Date(form.end_at); const deadline = form.registration_deadline ? new Date(form.registration_deadline) : null
+    const start = dateTimeInZoneFromLocal(form.start_at); const end = dateTimeInZoneFromLocal(form.end_at); const deadline = form.registration_deadline ? dateTimeInZoneFromLocal(form.registration_deadline) : null
+    if (!start || !end || (form.registration_deadline && !deadline)) return setError('Enter valid event dates and times.')
     if (!(start < end)) return setError('The end time must be after the start time.')
     if (!editMode && start.getTime() <= Date.now()) return setError('Choose a future start time for a new event.')
     if (!editMode && !deadline) return setError('Add a registration deadline for this event.')
@@ -126,8 +125,7 @@ export function OrganizerEventFormPage() {
   }
   if (loading) return <Workspace><Loading /></Workspace>
   return <Workspace><Link className="back-link" to={eventCollectionPath}>← Back to your events</Link><PageTitle eyebrow={isAdmin ? "MEHFIL ADMINISTRATION" : "ORGANIZER STUDIO"} title={editMode ? 'Shape the details' : 'Bring people together'} description={editMode ? 'Keep the information clear and up to date.' : 'Make a little room on the calendar for something good.'} />
-    {error && <p className="form-error form-error-box">{error}</p>}
-    <form className="form-card event-form" onSubmit={submit}><div className="form-two"><Field label="Event title"><input required maxLength="120" value={form.title} onChange={update('title')} /></Field><Field label="Category"><select required value={categoryChoice} onChange={changeCategory}><option value="">Select a category</option>{EVENT_CATEGORIES.map((category) => <option key={category} value={category}>{category}</option>)}<option value="Other">Other — enter your own</option></select></Field></div>{categoryChoice === 'Other' && <Field label="Custom category"><input required maxLength="80" placeholder="Enter an event category" value={customCategory} onChange={changeCustomCategory} /></Field>}<Field label="Description"><textarea required rows="5" value={form.description} onChange={update('description')} /></Field><div className="form-two"><Field label="Department"><input required value={form.department_name} onChange={update('department_name')} /></Field><Field label="Venue"><input required value={form.venue} onChange={update('venue')} /></Field></div><div className="form-three"><Field label="Starts"><input required type="datetime-local" value={form.start_at} onChange={update('start_at')} /></Field><Field label="Ends"><input required type="datetime-local" value={form.end_at} onChange={update('end_at')} /></Field><Field label="Registration deadline"><input required={!editMode} type="datetime-local" value={form.registration_deadline} onChange={update('registration_deadline')} /></Field></div><Field label="Capacity"><input min="1" type="number" placeholder="Leave blank for open capacity" value={form.capacity} onChange={update('capacity')} /></Field>{editMode && <div className="form-status-note"><StatusBadge value={status} /> Event status uses the supported campus statuses.</div>}<div className="form-actions"><Button variant="outline" type="button" onClick={() => navigate(eventCollectionPath)}>Cancel</Button><Button disabled={busy}>{busy ? 'Saving…' : editMode ? 'Save changes' : 'Publish event'} <ArrowUpRight size={16} /></Button></div></form>
+    <form className="form-card event-form" onSubmit={submit}><div className="form-two"><Field label="Event title"><input required maxLength="120" placeholder="e.g., Campus Music Night" value={form.title} onChange={update('title')} /></Field><Field label="Category"><select required value={categoryChoice} onChange={changeCategory}><option value="">Select a category</option>{EVENT_CATEGORIES.map((category) => <option key={category} value={category}>{category}</option>)}<option value="Other">Other — enter your own</option></select></Field></div>{categoryChoice === 'Other' && <Field label="Custom category"><input required maxLength="80" placeholder="Enter an event category" value={customCategory} onChange={changeCustomCategory} /></Field>}<Field label="Description"><textarea required rows="5" placeholder="Tell attendees what to expect, what to bring, and how to join." value={form.description} onChange={update('description')} /></Field><div className="form-two"><Field label="Department"><input required placeholder="e.g., Computer Science" value={form.department_name} onChange={update('department_name')} /></Field><Field label="Venue"><input required placeholder="e.g., Main Auditorium, Block A" value={form.venue} onChange={update('venue')} /></Field></div><p className="form-help">Event times use the campus timezone: India Standard Time (Asia/Kolkata), regardless of your device timezone.</p><div className="form-three"><Field label="Starts (IST)"><input required type="datetime-local" value={form.start_at} onChange={update('start_at')} /></Field><Field label="Ends (IST)"><input required type="datetime-local" value={form.end_at} onChange={update('end_at')} /></Field><Field label="Registration deadline (IST)"><input required={!editMode} type="datetime-local" value={form.registration_deadline} onChange={update('registration_deadline')} /></Field></div><Field label="Capacity"><input min="1" type="number" placeholder="Leave blank for open capacity" value={form.capacity} onChange={update('capacity')} /></Field>{editMode && <div className="form-status-note"><StatusBadge value={status} /> Event status uses the supported campus statuses.</div>}{error && <p className="form-error form-error-box" role="alert">{error}</p>}<div className="form-actions"><Button variant="outline" type="button" onClick={() => navigate(eventCollectionPath)}>Cancel</Button><Button disabled={busy}>{busy ? 'Saving…' : editMode ? 'Save changes' : 'Publish event'} <ArrowUpRight size={16} /></Button></div></form>
   </Workspace>
 }
 
