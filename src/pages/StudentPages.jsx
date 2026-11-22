@@ -1,7 +1,7 @@
 ﻿import { useEffect, useState } from 'react'
 import { useMemo } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { ArrowRight, ArrowUpRight, CalendarDays, Check, ClipboardCheck, MapPin, Moon, Sparkles, Sun, Ticket, Users, X } from 'lucide-react'
+import { ArrowRight, ArrowUpRight, CalendarDays, Check, ClipboardCheck, Mail, MapPin, Moon, Sparkles, Sun, Ticket, Users, X } from 'lucide-react'
 import { Button, EmptyState, ErrorState, EventCard, Field, Loading, PageTitle, SectionHeading, StatCard, StatusBadge, useToast } from '../components/ui'
 import { useAuth } from '../contexts/AuthContext'
 import { useTheme } from '../contexts/ThemeContext'
@@ -35,6 +35,7 @@ export function StudentRegistrationsPage() {
   const notify = useToast()
   const [tab, setTab] = useState('ALL')
   const [busy, setBusy] = useState('')
+  const [emailBusy, setEmailBusy] = useState('')
   const data = useRequest(() => fetchRegistrations({ studentId: user.id }), [user?.id])
   const rows = data.data || []
   const filtered = rows.filter((item) => tab === 'CONFIRMED' || tab === 'CANCELLED' ? item.registration_status === tab : tab === 'PAST' ? item.event && new Date(item.event.end_at || item.event.start_at) < new Date() : true)
@@ -44,8 +45,15 @@ export function StudentRegistrationsPage() {
     try { await cancelRegistration(row.registration_id); await sendEventEmail('registration_cancelled', row.event_id, row.registration_id); notify('Your registration has been cancelled.'); await data.refresh() }
     catch (error) { notify(friendlyError(error), 'error') } finally { setBusy('') }
   }
+  const resendConfirmation = async (row) => {
+    setEmailBusy(row.registration_id)
+    try {
+      const emailError = await sendEventEmail('registration_confirmed', row.event_id, row.registration_id, { resend: true })
+      notify(emailError ? 'Could not send confirmation email: ' + (emailError.message || 'delivery unavailable') : 'Confirmation email sent to your account email.')
+    } catch (error) { notify(friendlyError(error), 'error') } finally { setEmailBusy('') }
+  }
   return <Workspace><PageTitle eyebrow="YOUR CAMPUS PLANS" title="My registrations" description="The moments you’ve already made room for." /><div className="tabs">{['ALL', 'CONFIRMED', 'CANCELLED', 'PAST'].map((item) => <button key={item} className={tab === item ? 'tab-active' : ''} onClick={() => setTab(item)}>{item[0] + item.slice(1).toLowerCase()}</button>)}</div>
-    {data.loading ? <Loading /> : data.error ? <ErrorState message={friendlyError(data.error)} retry={data.refresh} /> : filtered.length ? <div className="registration-list">{filtered.map((row) => <article className="registration-card" key={row.registration_id}><div className="registration-date"><span>{new Date(row.event?.start_at || row.registered_at).toLocaleDateString(undefined, { month: 'short' })}</span><strong>{new Date(row.event?.start_at || row.registered_at).getDate()}</strong><small>{new Date(row.event?.start_at || row.registered_at).getFullYear()}</small></div><div className="registration-info"><span className="eyebrow">{row.event?.category_name || 'CAMPUS EVENT'}</span><h3>{row.event?.title || 'Event details unavailable'}</h3><p><CalendarDays size={14} />{formatDate(row.event?.start_at)} · Registered {formatDate(row.registered_at)}</p><p><MapPin size={14} />{row.event?.venue || 'Venue to be announced'}</p></div><div className="registration-status"><StatusBadge value={row.registration_status} />{row.attendance && <StatusBadge value={row.attendance.attendance_status} />}<span>Attendance: {row.attendance?.attendance_status || 'Not yet marked'}</span></div><div className="registration-actions">{row.event && <Link className="button button-outline button-small" to={'/events/' + row.event_id}>Details</Link>}{row.registration_status === 'CONFIRMED' && <Button variant="quiet" disabled={busy === row.registration_id} onClick={() => cancel(row)}>{busy === row.registration_id ? 'Cancelling…' : 'Cancel'}</Button>}</div></article>)}</div> : <EmptyState icon={Ticket} title="No registrations in this view" description="When you find something worth showing up for, your registration will appear here." action={<Link className="button button-primary" to="/events">Explore events <ArrowRight size={16} /></Link>} />}
+    {data.loading ? <Loading /> : data.error ? <ErrorState message={friendlyError(data.error)} retry={data.refresh} /> : filtered.length ? <div className="registration-list">{filtered.map((row) => <article className="registration-card" key={row.registration_id}><div className="registration-date"><span>{new Date(row.event?.start_at || row.registered_at).toLocaleDateString(undefined, { month: 'short' })}</span><strong>{new Date(row.event?.start_at || row.registered_at).getDate()}</strong><small>{new Date(row.event?.start_at || row.registered_at).getFullYear()}</small></div><div className="registration-info"><span className="eyebrow">{row.event?.category_name || 'CAMPUS EVENT'}</span><h3>{row.event?.title || 'Event details unavailable'}</h3><p><CalendarDays size={14} />{formatDate(row.event?.start_at)} · Registered {formatDate(row.registered_at)}</p><p><MapPin size={14} />{row.event?.venue || 'Venue to be announced'}</p><p className="registration-ticket"><span>REGISTRATION ID</span><code>{row.registration_id}</code>{row.registration_status === 'CONFIRMED' && <small>Show this ID to the organizer at check-in.</small>}</p></div><div className="registration-status"><StatusBadge value={row.registration_status} />{row.attendance && <StatusBadge value={row.attendance.attendance_status} />}<span>Attendance: {row.attendance?.attendance_status || 'Not yet marked'}</span></div><div className="registration-actions">{row.event && <Link className="button button-outline button-small" to={'/events/' + row.event_id}>Details</Link>}{row.registration_status === 'CONFIRMED' && <><Button variant="outline" className="button-small" disabled={emailBusy === row.registration_id} onClick={() => resendConfirmation(row)}><Mail size={14} />{emailBusy === row.registration_id ? 'Sending…' : 'Resend email'}</Button><Button variant="quiet" disabled={busy === row.registration_id} onClick={() => cancel(row)}>{busy === row.registration_id ? 'Cancelling…' : 'Cancel'}</Button></>}</div></article>)}</div> : <EmptyState icon={Ticket} title="No registrations in this view" description="When you find something worth showing up for, your registration will appear here." action={<Link className="button button-primary" to="/events">Explore events <ArrowRight size={16} /></Link>} />}
   </Workspace>
 }
 

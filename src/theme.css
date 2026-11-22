@@ -43,6 +43,8 @@
 [data-theme="dark"] .back-link{color:#c7abd7}
 [data-theme="dark"] .registered-state{background:#263128}
 [data-theme="dark"] .registered-state p{color:#bac1ba}
+[data-theme="dark"] .registration-ticket>span,[data-theme="dark"] .registration-ticket code,[data-theme="dark"] .registration-id{color:#e0c6ee}
+[data-theme="dark"] .registration-ticket small{color:#b2a9b6}
 [data-theme="dark"] .notice-box{background:#322a38;color:#dac9e5}
 [data-theme="dark"] .previous-registration{background:#382c2c;color:#e2baba}
 [data-theme="dark"] .auth-layout{background:#19171c;color:#f0ecf2}

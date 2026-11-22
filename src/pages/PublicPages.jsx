@@ -248,7 +248,9 @@ export function EventDetailsPage() {
       const result = await registerForEvent(eventId)
       await load()
       const emailError = await sendEventEmail('registration_confirmed', eventId, result.registrationId)
-      notify(emailError ? 'You’re registered. Email confirmation is not configured yet.' : 'You’re registered. Check your inbox for a confirmation.')
+      notify(emailError
+        ? 'Registration saved, but email failed: ' + (emailError.message || 'delivery unavailable') + '. Your ID is shown here and in My registrations.'
+        : 'Registration confirmed. Your ID is shown here and in My registrations; check your inbox for the email.')
     } catch (problem) { notify(friendlyError(problem), 'error') } finally { setBusy(false) }
   }
   const cancel = async () => {
@@ -275,7 +277,7 @@ export function EventDetailsPage() {
         <div className="detail-facts"><div><CalendarDays /><span><small>WHEN</small><strong>{formatDate(event.start_at)}</strong><em>{formatTime(event.start_at)}{event.end_at ? ' – ' + formatTime(event.end_at) : ''}</em></span></div><div><Compass /><span><small>WHERE</small><strong>{event.venue || 'Venue to be announced'}</strong><em>{event.department_name || 'Campus'}</em></span></div><div><Users /><span><small>HOSTED BY</small><strong>{event.organizer?.organization_name || event.organizer?.full_name || 'Campus organizer'}</strong><em>{event.department_name || 'MEHFIL community'}</em></span></div><div><Ticket /><span><small>REGISTRATION CLOSES</small><strong>{formatDate(event.registration_deadline)}</strong><em>{event.capacity ? event.capacity + ' places total' : 'Open capacity'}</em></span></div></div>
       </div></article>
       <aside className="registration-panel"><span className="eyebrow">SAVE YOUR PLACE</span><h2>Be part of it.</h2><p>Make a little room in your calendar. The best campus memories rarely happen by accident.</p>{lastRegistration?.registration_status === 'CANCELLED' && <div className="previous-registration"><StatusBadge value="CANCELLED" /> Your previous registration was cancelled.</div>}
-        {myRegistration ? <div className="registered-state"><div><Check size={18} /> You’re on the list</div><StatusBadge value={myRegistration.registration_status} /><p>Your registration is confirmed.</p><Button variant="outline" disabled={busy} onClick={() => setConfirmingCancel(true)}>Cancel registration</Button></div> :
+        {myRegistration ? <div className="registered-state"><div><Check size={18} /> You’re on the list</div><StatusBadge value={myRegistration.registration_status} /><p>Your registration is confirmed.</p><p className="registration-ticket"><span>REGISTRATION ID</span><code>{myRegistration.registration_id}</code><small>Show this ID to the organizer at check-in.</small></p><Button variant="outline" disabled={busy} onClick={() => setConfirmingCancel(true)}>Cancel registration</Button></div> :
           available && student ? <Button className="full-width" disabled={busy} onClick={registered}>{busy ? 'Saving your place…' : 'Register now'} <ArrowUpRight size={17} /></Button> :
           available && !user ? <Link className="button button-primary full-width" to={'/login?next=' + encodeURIComponent('/events/' + eventId)}>Log in to register <ArrowUpRight size={17} /></Link> :
           available && !student ? <p className="notice-box">Registration is available to student accounts.</p> :

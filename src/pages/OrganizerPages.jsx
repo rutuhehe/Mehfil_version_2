@@ -1,6 +1,6 @@
 ﻿import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ArrowRight, ArrowUpRight, CalendarDays, CircleCheck, ClipboardCheck, MapPin, Pencil, Plus, Search, Ticket, Users, X } from 'lucide-react'
+import { ArrowRight, ArrowUpRight, CalendarDays, CircleCheck, ClipboardCheck, Download, MapPin, Pencil, Plus, Search, Ticket, Users, X } from 'lucide-react'
 import { Button, EmptyState, ErrorState, Field, Loading, PageTitle, SectionHeading, StatCard, StatusBadge, useToast } from '../components/ui'
 import { useAuth } from '../contexts/AuthContext'
 import { adminCreateEvent, adminUpdateEvent, fetchEvents, fetchParticipants, fetchRegistrations, markAttendance, saveEvent, sendEventEmail, updateEvent } from '../services/api'
@@ -141,12 +141,24 @@ export function OrganizerParticipantsPage() {
   const rows = (participants.data || []).filter((row) => {
     const student = row.student || {}
     const matches = !query || [student.full_name, student.student_number, student.email, student.department_name].filter(Boolean).some((value) => value.toLowerCase().includes(query.toLowerCase()))
-    return matches && (!status || row.registration_status === status)
+    return (matches || row.registration_id.toLowerCase().includes(query.toLowerCase())) && (!status || row.registration_status === status)
   })
-  return <Workspace><PageTitle eyebrow="YOUR CAMPUS LINEUP" title="Participants" description="The people who are showing up for your events." />
+  const exportTicketRoster = () => {
+    const ticketRows = (participants.data || []).map((row) => [row.registration_id, row.event_id, row.registration_status])
+    const csv = '\uFEFFregistration_id,event_id,registration_status\r\n' + ticketRows.map((row) => row.join(',')).join('\r\n') + '\r\n'
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = 'mehfil-tickets-' + selected.slice(0, 8) + '.csv'
+    document.body.append(link)
+    link.click()
+    link.remove()
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }
+  return <Workspace><PageTitle eyebrow="YOUR CAMPUS LINEUP" title="Participants" description="The people who are showing up for your events." action={participants.data?.length ? <Button variant="outline" onClick={exportTicketRoster}><Download size={15} /> Export ticket CSV</Button> : null} />
     {events.loading ? <Loading /> : events.error ? <ErrorState message={friendlyError(events.error)} retry={events.refresh} /> : !eventList.length ? <EmptyState icon={Users} title="Participants start with an event" description="Create your first event and confirmed registrations will appear here." action={<Link className="button button-primary" to="/organizer/events/new">Create event <ArrowRight size={15} /></Link>} /> :
-      <><div className="table-toolbar"><label className="filter-control"><span>Event</span><select value={selected} onChange={(e) => setSelected(e.target.value)}>{eventList.map((event) => <option value={event.event_id} key={event.event_id}>{event.title}</option>)}</select></label><div className="search-control"><Search size={16} /><input placeholder="Search name, roll number, email" value={query} onChange={(e) => setQuery(e.target.value)} /></div><select className="table-select" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">All statuses</option><option>CONFIRMED</option><option>CANCELLED</option></select></div>
-      {participants.loading ? <Loading /> : participants.error ? <ErrorState message={friendlyError(participants.error)} retry={participants.refresh} /> : rows.length ? <DataTable columns={['Student', 'Roll Number', 'Department', 'Email', 'Registered', 'Status']} rows={rows.map((row) => [<strong>{row.student?.full_name || 'Student'}</strong>, row.student?.student_number || '—', row.student?.department_name || '—', row.student?.email || '—', formatDate(row.registered_at), <StatusBadge value={row.registration_status} />])} /> : <EmptyState icon={Users} title="No participants match" description="Try another search, or check back after registrations open." />}</>}
+      <><div className="table-toolbar"><label className="filter-control"><span>Event</span><select value={selected} onChange={(e) => setSelected(e.target.value)}>{eventList.map((event) => <option value={event.event_id} key={event.event_id}>{event.title}</option>)}</select></label><div className="search-control"><Search size={16} /><input placeholder="Search name, roll number, email or ID" value={query} onChange={(e) => setQuery(e.target.value)} /></div><select className="table-select" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">All statuses</option><option>CONFIRMED</option><option>CANCELLED</option></select></div>
+      {participants.loading ? <Loading /> : participants.error ? <ErrorState message={friendlyError(participants.error)} retry={participants.refresh} /> : rows.length ? <DataTable columns={['Student', 'Roll Number', 'Registration ID', 'Department', 'Email', 'Registered', 'Status']} rows={rows.map((row) => [<strong>{row.student?.full_name || 'Student'}</strong>, row.student?.student_number || '—', <code className="registration-id">{row.registration_id}</code>, row.student?.department_name || '—', row.student?.email || '—', formatDate(row.registered_at), <StatusBadge value={row.registration_status} />])} /> : <EmptyState icon={Users} title="No participants match" description="Try another search, or check back after registrations open." />}</>}
   </Workspace>
 }
 

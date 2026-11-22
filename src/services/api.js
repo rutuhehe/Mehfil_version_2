@@ -201,13 +201,19 @@ export async function adminDeleteUser(userId) {
   return data
 }
 
-export async function sendEventEmail(type, eventId, registrationId = null) {
+export async function sendEventEmail(type, eventId, registrationId = null, { resend = false } = {}) {
   try {
-    const result = await client().functions.invoke('event-email-notify', { body: { type, eventId, registrationId } })
-    if (result.error) return result.error
+    const result = await client().functions.invoke('event-email-notify', {
+      body: { type, eventId, registrationId, emailAttemptId: resend ? crypto.randomUUID() : null },
+    })
+    if (result.error) {
+      let message = result.error.message || 'The email function could not send this message.'
+      try { message = (await result.error.context.json()).error || message } catch {}
+      return new Error(message)
+    }
     return null
   } catch (error) {
-    return error
+    return error instanceof Error ? error : new Error('The email function could not be reached.')
   }
 }
 

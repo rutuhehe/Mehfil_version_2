@@ -6,6 +6,7 @@ dist/
 coverage/
 ticket-validator/*.class
 ticket-validator/checked-in.txt
+ticket-validator/checked-in.csv
 .vite/
 supabase/.temp/
 supabase/.branches/
